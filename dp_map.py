@@ -8,6 +8,7 @@ import argparse
 import pathlib
 import re
 import dp_lib
+import Metal as metal
 from dp_lib import *
 import time
 from PIL import Image
@@ -22,9 +23,21 @@ parser.add_argument('--frames', type=int, default=3600,help='Number of frames fo
 parser.add_argument('--start', type=int, default=0,help='Start frame for animation') 
 parser.add_argument('--folder', type=str, default="",help='Folder to save frames')
 parser.add_argument('--pfile', type=str, default="",help='File with target point coordinates')
+parser.add_argument('--backend', type=str, default="opencl", choices=["metal", "opencl"],
+                    help='Backend to use for computation (default: opencl)')
 
 
 args = parser.parse_args()
+
+
+if(args.backend == "metal"):
+    device = metal.MTLCreateSystemDefaultDevice()
+
+    if not device:
+        print("Metal is not supported on this device")
+    else:
+        print(f"Default Metal device: {device.name()}")
+
 
 wid = round(args.height*1.777);
 
@@ -230,7 +243,10 @@ def main():
                               MAX_ITER=5000, 
                               theta1_min=theta1_min, theta1_max=theta1_max, theta2_min=theta2_min, theta2_max=theta2_max)
     
-    mapper = Mapper(WIDTH, HEIGHT, pendulum)
+    
+    
+    # Use the backend selection function to create the appropriate mapper
+    mapper = create_mapper(WIDTH, HEIGHT, pendulum, args.backend)
     
     setup_frame_saving() # Создаем папку для кадров при запуске
 

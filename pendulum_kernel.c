@@ -29,10 +29,7 @@ __kernel void simulate_pendulum(
 
 
 
-    //for (int i = 0; i < MAX_ITERATIONS; ++i) 
-    int i = 0;
-
-start:
+    for (int i = 0; i < MAX_ITERATIONS; ++i) 
     {
         // Уравнения движения для двойного маятника (упрощенные для читаемости)
         // Источник: https://www.myphysicslab.com/pendulum/doublpendulum-en.html
@@ -82,18 +79,11 @@ start:
         cycles++;
 
         if (fabs(th1) > 2.0f * M_PI_F) {
-            goto end;
+            break;
         }
     }
 
-    i++;
-    if(i < MAX_ITERATIONS) 
-    {
-        goto start;
-    }
-  
-end:
 
-
+    
     cycle_counts[gid] = cycles;
 }
