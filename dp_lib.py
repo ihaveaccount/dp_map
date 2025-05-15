@@ -114,7 +114,7 @@ class Mapper:
         self.ctx = cl.create_some_context()
         self.queue = cl.CommandQueue(self.ctx)
         
-        kernel_path = os.path.join(os.path.dirname(__file__), "pendulum_kernel.cl")
+        kernel_path = os.path.join(os.path.dirname(__file__), "pendulum_kernel.c")
         with open(kernel_path, "r") as f:
             kernel_code = f.read()
         self.prg = cl.Program(self.ctx, kernel_code).build()
