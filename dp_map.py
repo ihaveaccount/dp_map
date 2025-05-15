@@ -294,14 +294,15 @@ def main():
                             'step': frame_counter, 'total_steps': args.frames})
         
 
-
+    total_time = time.time()
+    rendered_frames = 0
     running = True
     while running:
 
         # --- Логика обновления и анимации ---
         if animation_queue:
             anim = animation_queue[0]
- 
+
             anim['step'] += 1
             t = anim['step'] / anim['total_steps']
           
@@ -355,8 +356,12 @@ def main():
 
             # Вычисляем прошедшее время и форматируем вывод
             elapsed_time = end_time - start_time
+            elapsed_total_time = total_time - end_time
             estimated_time = round(elapsed_time * (anim['total_steps'] - anim['step'])/3600, 2)
+            
             print(f"Rendered {(frame_counter-1):05d} at {elapsed_time:.3f}s, estimated: {estimated_time:.2f} hours")
+
+            rendered_frames +=1
 
         elif(args.anim and frame_counter > 0):
             # Если анимация завершена, выходим из цикла
