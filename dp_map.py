@@ -1,13 +1,11 @@
 import pygame
 import numpy as np
-import pyopencl as cl
 import os
 import datetime
 import math
 import argparse 
 import pathlib
 import re
-import dp_lib
 import Metal as metal
 from dp_lib import *
 import time

@@ -2,10 +2,9 @@
 import numpy as np
 import pyopencl as cl
 import os
-import pygame
 import math
 import Metal as metal
-import Foundation
+
 
 from PIL import Image
 
@@ -304,7 +303,6 @@ def create_mapper(width, height, pendulum, backend):
     if backend == 'opencl':
         return MapperOpenCL(width, height, pendulum)
     elif backend == 'metal':
-        
         return MapperMetal(width, height, pendulum)
     else:
         raise ValueError(f"Unsupported backend: {backend}")
