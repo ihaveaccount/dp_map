@@ -18,4 +18,5 @@
  - --start - начать с определенного кадра
 
 тестовый запуск aнимации:
+
     python dp_map.py --pfile testpoint.txt --anim
