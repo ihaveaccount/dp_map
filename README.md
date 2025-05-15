@@ -1,4 +1,4 @@
-# Double Pendulum fractal map
+# DP map
 
 Перед запуском:
 
@@ -17,7 +17,7 @@
  - --folder  - подпапка во frames/, в которой лежит точка для анимации и которая будет содержать итоговые кадры. По-умолчанию создастся с текущей датой
  - --pfile - путь до файла с точкой, по-умолчанию frames/[folder]/point.txt
  - --start - начать с определенного кадра, по-умолчанию смотрит по номеру png в папке
- - --backend - opencl или metal. По-умолчанию opencl
+ - --backend - opencl или metal. По-умолчанию opencl, metal пока не работает
 
  ## create_video.sh
 
