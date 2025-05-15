@@ -4,8 +4,8 @@ import pyopencl as cl
 import os
 import math
 import Metal as metal
-
-
+import pathlib
+import re
 from PIL import Image
 
 
@@ -169,115 +169,9 @@ class MapperOpenCL:
 
 
 
-class MapperMetal:
-    """Класс для вычисления карты двойного маятника с использованием Metal."""
 
-    def __init__(self, width, height, mappable_function):
-        self.width = width
-        self.height = height
-        self.mappable = mappable_function
 
-        # --- Metal Setup ---
-        self.device = metal.MTLCreateSystemDefaultDevice()
-        if self.device is None:
-            raise RuntimeError("Metal device not found")
-            
-        # Загружаем шейдеры
-        shader_path = os.path.join(os.path.dirname(__file__), "pendulum_kernel.metal")
-        self.library = self.device.newLibraryWithFile_error_(shader_path, None)[0]
-        if self.library is None:
-            raise RuntimeError("Failed to load Metal library")
-            
-        self.command_queue = self.device.newCommandQueue()
-        self.kernel_function = self.library.newFunctionWithName_("simulate_pendulum")
-        self.pipeline_state = self.device.newComputePipelineStateWithFunction_error_(self.kernel_function, None)[0]
-        
-        # --- Буферы ---
-        self.num_points = self.width * self.height
-        # Выходной буфер для результатов
-        self.raw_results_np = np.empty(self.num_points, dtype=np.int32)
-        self.output_buffer = self.device.newBufferWithLength_options_(self.raw_results_np.nbytes, metal.MTLResourceStorageModeShared)
-        
-        # Входные буферы (будут создаваться при каждом вызове)
-        self.input_theta1_np = np.empty(self.num_points, dtype=np.float64)
-        self.input_theta2_np = np.empty(self.num_points, dtype=np.float64)
-        
-    def compute_map_raw(self, x_min, x_max, y_min, y_max):
-        """ Вычисляет сырые данные карты (количество циклов) """
-        theta1_vals = np.linspace(x_min, x_max, self.width, dtype=np.float64)
-        theta2_vals = np.linspace(y_min, y_max, self.height, dtype=np.float64)
-
-        # Заполнение входных массивов: каждому пикселю своя пара (theta1, theta2)
-        for r_idx in range(self.height):
-            for c_idx in range(self.width):
-                idx = r_idx * self.width + c_idx
-                self.input_theta1_np[idx] = theta1_vals[c_idx]
-                self.input_theta2_np[idx] = theta2_vals[r_idx]
-        
-        # Создание буферов для Metal
-        input_theta1_buffer = self.device.newBufferWithBytes_length_options_(
-            self.input_theta1_np, self.input_theta1_np.nbytes, metal.MTLResourceStorageModeShared)
-        input_theta2_buffer = self.device.newBufferWithBytes_length_options_(
-            self.input_theta2_np, self.input_theta2_np.nbytes, metal.MTLResourceStorageModeShared)
-            
-        # Параметры маятника
-        L1, L2, M1, M2, G, DT, MAX_ITER = self.mappable.get_kernel_params()
-        
-        # Создаем буферы для параметров
-        L1_buffer = self.device.newBufferWithBytes_length_options_(
-            np.array([L1], dtype=np.float64), 8, metal.MTLResourceStorageModeShared)
-        L2_buffer = self.device.newBufferWithBytes_length_options_(
-            np.array([L2], dtype=np.float64), 8, metal.MTLResourceStorageModeShared)
-        M1_buffer = self.device.newBufferWithBytes_length_options_(
-            np.array([M1], dtype=np.float64), 8, metal.MTLResourceStorageModeShared)
-        M2_buffer = self.device.newBufferWithBytes_length_options_(
-            np.array([M2], dtype=np.float64), 8, metal.MTLResourceStorageModeShared)
-        G_buffer = self.device.newBufferWithBytes_length_options_(
-            np.array([G], dtype=np.float64), 8, metal.MTLResourceStorageModeShared)
-        DT_buffer = self.device.newBufferWithBytes_length_options_(
-            np.array([DT], dtype=np.float64), 8, metal.MTLResourceStorageModeShared)
-        MAX_ITER_buffer = self.device.newBufferWithBytes_length_options_(
-            np.array([MAX_ITER], dtype=np.int32), 4, metal.MTLResourceStorageModeShared)
-        
-        # Создание и настройка команды
-        command_buffer = self.command_queue.commandBuffer()
-        compute_encoder = command_buffer.computeCommandEncoder()
-        compute_encoder.setComputePipelineState_(self.pipeline_state)
-        
-        # Настройка буферов
-        compute_encoder.setBuffer_offset_atIndex_(input_theta1_buffer, 0, 0)
-        compute_encoder.setBuffer_offset_atIndex_(input_theta2_buffer, 0, 1)
-        compute_encoder.setBuffer_offset_atIndex_(self.output_buffer, 0, 2)
-        compute_encoder.setBuffer_offset_atIndex_(L1_buffer, 0, 3)
-        compute_encoder.setBuffer_offset_atIndex_(L2_buffer, 0, 4)
-        compute_encoder.setBuffer_offset_atIndex_(M1_buffer, 0, 5)
-        compute_encoder.setBuffer_offset_atIndex_(M2_buffer, 0, 6)
-        compute_encoder.setBuffer_offset_atIndex_(G_buffer, 0, 7)
-        compute_encoder.setBuffer_offset_atIndex_(DT_buffer, 0, 8)
-        compute_encoder.setBuffer_offset_atIndex_(MAX_ITER_buffer, 0, 9)
-        
-        # Вычисление количества потоков и групп
-        threads_per_group = metal.MTLSize(width=256, height=1, depth=1)
-        num_groups = metal.MTLSize(
-            width=(self.num_points + threads_per_group.width - 1) // threads_per_group.width,
-            height=1,
-            depth=1
-        )
-        
-        # Запуск вычислений
-        compute_encoder.dispatchThreadgroups_threadsPerThreadgroup_(num_groups, threads_per_group)
-        compute_encoder.endEncoding()
-        
-        # Выполнение команды и ожидание завершения
-        command_buffer.commit()
-        command_buffer.waitUntilCompleted()
-        
-        # Копирование результатов
-        result_ptr = self.output_buffer.contents()
-        np.copyto(self.raw_results_np, np.ctypeslib.as_array(result_ptr, shape=(self.num_points,)).astype(np.int32))
-        
-        return self.raw_results_np.copy()
-        
+ 
     def normalize_data(self, raw_data):
         """ Нормализует сырые данные (логарифм + min-max масштабирование в 0-255). """
         # Применяем натуральный логарифм (log1p для обработки нулей: log(1+x))
@@ -294,6 +188,96 @@ class MapperMetal:
         normalized_data = np.clip(normalized_data, 0, 255).astype(np.uint8)
         return normalized_data.reshape((self.height, self.width))
 
+class MapperMetal:
+    def __init__(self, width, height, mappable_function):
+        self.width = width
+        self.height = height
+        self.mappable = mappable_function
+        self.num_points = width * height
+        
+        # Metal setup
+        self.device = metal.MTLCreateSystemDefaultDevice()
+        self.library = self._load_shader_library()
+        self.command_queue = self.device.newCommandQueue()
+        
+        # Buffers
+        self.input_theta1 = None
+        self.input_theta2 = None
+        self.output_buffer = None
+        
+    def _load_shader_library(self):
+        kernel_path = os.path.join(os.path.dirname(__file__), "pendulum_kernel.metal")
+        with open(kernel_path, "r") as f:
+            source = f.read()
+        return self.device.newLibraryWithSource_options_error_(source, None, None)[0]
+    
+    def compute_map_raw(self, x_min, x_max, y_min, y_max):
+        # Prepare input data
+        theta1_vals = np.linspace(x_min, x_max, self.width, dtype=np.float32)
+        theta2_vals = np.linspace(y_min, y_max, self.height, dtype=np.float32)
+        
+        input_theta1 = np.empty(self.num_points, dtype=np.float32)
+        input_theta2 = np.empty(self.num_points, dtype=np.float32)
+        
+        for r in range(self.height):
+            for c in range(self.width):
+                idx = r * self.width + c
+                input_theta1[idx] = theta1_vals[c]
+                input_theta2[idx] = theta2_vals[r]
+        
+        # Create buffers
+        self.input_theta1 = self.device.newBufferWithBytes_length_options_(
+            input_theta1.tobytes(), input_theta1.nbytes, metal.MTLResourceStorageModeShared
+        )
+        self.input_theta2 = self.device.newBufferWithBytes_length_options_(
+            input_theta2.tobytes(), input_theta2.nbytes, metal.MTLResourceStorageModeShared
+        )
+        self.output_buffer = self.device.newBufferWithLength_options_(
+            self.num_points * 4, metal.MTLResourceStorageModeShared
+        )
+        
+        # Get kernel parameters
+        L1, L2, M1, M2, G, DT, MAX_ITER = self.mappable.get_kernel_params()
+        params = np.array([L1, L2, M1, M2, G, DT, MAX_ITER], dtype=np.float32)
+        
+        # Configure pipeline
+        compute_function = self.library.newFunctionWithName_("simulate_pendulum")
+        pipeline_state = self.device.newComputePipelineStateWithFunction_error_(compute_function, None)[0]
+        
+        # Encode command
+        command_buffer = self.command_queue.commandBuffer()
+        compute_encoder = command_buffer.computeCommandEncoder()
+        
+        compute_encoder.setComputePipelineState_(pipeline_state)
+        compute_encoder.setBuffer_offset_atIndex_(self.input_theta1, 0, 0)
+        compute_encoder.setBuffer_offset_atIndex_(self.input_theta2, 0, 1)
+        compute_encoder.setBuffer_offset_atIndex_(self.output_buffer, 0, 2)
+        
+        for i, val in enumerate(params):
+            compute_encoder.setBytes_length_atIndex_(val.tobytes(), val.nbytes, 3 + i)
+        
+        grid_size = metal.MTLSizeMake(self.num_points, 1, 1)
+        thread_group_size = metal.MTLSizeMake(pipeline_state.maxTotalThreadsPerThreadgroup(), 1, 1)
+        
+        compute_encoder.dispatchThreads_threadsPerThreadgroup_(grid_size, thread_group_size)
+        compute_encoder.endEncoding()
+        command_buffer.commit()
+        command_buffer.waitUntilCompleted()
+        
+        # Get results
+        result_ptr = self.output_buffer.contents()
+        result_np = np.frombuffer(result_ptr, dtype=np.int32, count=self.num_points)
+        return result_np.copy()
+    
+    def normalize_data(self, raw_data):
+        # Same normalization as OpenCL version
+        log_data = np.log1p(raw_data.astype(np.float64))
+        min_val = np.min(log_data)
+        max_val = np.max(log_data)
+        if max_val == min_val:
+            return np.zeros_like(log_data, dtype=np.uint8)
+        normalized = 255 * (log_data - min_val) / (max_val - min_val)
+        return np.clip(normalized, 0, 255).astype(np.uint8).reshape((self.height, self.width))
 
 
 
@@ -303,6 +287,7 @@ def create_mapper(width, height, pendulum, backend):
     if backend == 'opencl':
         return MapperOpenCL(width, height, pendulum)
     elif backend == 'metal':
+        # raise NotImplementedError("Metal backend is not implemented yet.")
         return MapperMetal(width, height, pendulum)
     else:
         raise ValueError(f"Unsupported backend: {backend}")
@@ -383,3 +368,77 @@ def interpolate(anim):
 
 
     return interp_x_min, interp_x_max, interp_y_min, interp_y_max
+
+
+def save_to_file(normalized_2d_data):
+    global frame_counter, frames_dir
+    """ Сохраняет 2D нормализованные данные в PNG файл. """
+    # Импортируем PIL вместо pygame
+
+    # Создаем копию данных, чтобы не изменять оригинал
+    # и преобразуем значения в диапазон 0-255 для изображения
+    img_data = normalized_2d_data.copy()
+    
+    # Если данные еще не нормализованы до 0-255, нужно их преобразовать
+    if img_data.max() <= 1.0:
+        img_data = (img_data * 255).astype(np.uint8)
+    else:
+        img_data = img_data.astype(np.uint8)
+    
+    # Создаем RGB изображение
+    height, width = img_data.shape
+    rgb_data = np.zeros((height, width, 3), dtype=np.uint8)
+    rgb_data[:, :, 0] = img_data  # R
+    rgb_data[:, :, 1] = img_data  # G
+    rgb_data[:, :, 2] = img_data  # B
+    
+    
+    # Создаем изображение из массива и сохраняем в файл
+    img = Image.fromarray(rgb_data)
+
+    filename = os.path.join(frames_dir, f"frame_{frame_counter:05d}.png")
+
+    img.save(filename)
+    
+    frame_counter += 1
+    #return output_path
+
+
+def find_max_frame_number(directory):
+    folder = pathlib.Path(directory)
+    max_num = -1
+    pattern = re.compile(r'^frame_(\d+)\.png$')
+    
+    for file in folder.glob('*.png'):
+        match = pattern.match(file.name)
+        if match:
+            current_num = int(match.group(1))
+            max_num = max(max_num, current_num)
+    
+    return max_num if max_num != -1 else 0
+
+
+
+
+def write_target_point_to_file(filename, coords):
+    """Записывает координаты точки в файл."""
+    try:
+        with open(filename, 'w') as file:
+            file.write(' '.join(map(str, coords)))    
+    except Exception as e:  
+        print(f"Error writing target point to file: {e}")
+
+
+def read_target_point_from_file(filename):
+    """Читает координаты точки из файла."""
+    try:        
+        with open(filename, 'r') as file:
+            content = file.read().split(' ') 
+            
+            coords = list(map(float, content))
+            print(coords)
+            return coords
+    except Exception as e:
+        print(f"Error reading target point from file: {e}")
+        return None
+
