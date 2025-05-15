@@ -7,7 +7,7 @@ import Metal as metal
 import pathlib
 import re
 from PIL import Image
-
+import ctypes
 
 # --- Интерфейс IMappable и его реализация ---
 class IMappable:
@@ -264,9 +264,20 @@ class MapperMetal:
         command_buffer.commit()
         command_buffer.waitUntilCompleted()
         
-        # Get results
+        # Получаем указатель на данные и преобразуем в ctypes
         result_ptr = self.output_buffer.contents()
-        result_np = np.frombuffer(result_ptr, dtype=np.int32, count=self.num_points)
+        buffer_length = self.output_buffer.length()
+        
+        # Создаем ctypes указатель на буфер
+        char_array = ctypes.cast(
+            result_ptr, 
+            ctypes.POINTER(ctypes.c_char * buffer_length)
+        )
+        
+        # Преобразуем в bytes и затем в numpy массив
+        byte_data = bytes(char_array.contents)
+        result_np = np.frombuffer(byte_data, dtype=np.int32, count=self.num_points)
+        
         return result_np.copy()
     
     def normalize_data(self, raw_data):
@@ -370,75 +381,4 @@ def interpolate(anim):
     return interp_x_min, interp_x_max, interp_y_min, interp_y_max
 
 
-def save_to_file(normalized_2d_data):
-    global frame_counter, frames_dir
-    """ Сохраняет 2D нормализованные данные в PNG файл. """
-    # Импортируем PIL вместо pygame
-
-    # Создаем копию данных, чтобы не изменять оригинал
-    # и преобразуем значения в диапазон 0-255 для изображения
-    img_data = normalized_2d_data.copy()
-    
-    # Если данные еще не нормализованы до 0-255, нужно их преобразовать
-    if img_data.max() <= 1.0:
-        img_data = (img_data * 255).astype(np.uint8)
-    else:
-        img_data = img_data.astype(np.uint8)
-    
-    # Создаем RGB изображение
-    height, width = img_data.shape
-    rgb_data = np.zeros((height, width, 3), dtype=np.uint8)
-    rgb_data[:, :, 0] = img_data  # R
-    rgb_data[:, :, 1] = img_data  # G
-    rgb_data[:, :, 2] = img_data  # B
-    
-    
-    # Создаем изображение из массива и сохраняем в файл
-    img = Image.fromarray(rgb_data)
-
-    filename = os.path.join(frames_dir, f"frame_{frame_counter:05d}.png")
-
-    img.save(filename)
-    
-    frame_counter += 1
-    #return output_path
-
-
-def find_max_frame_number(directory):
-    folder = pathlib.Path(directory)
-    max_num = -1
-    pattern = re.compile(r'^frame_(\d+)\.png$')
-    
-    for file in folder.glob('*.png'):
-        match = pattern.match(file.name)
-        if match:
-            current_num = int(match.group(1))
-            max_num = max(max_num, current_num)
-    
-    return max_num if max_num != -1 else 0
-
-
-
-
-def write_target_point_to_file(filename, coords):
-    """Записывает координаты точки в файл."""
-    try:
-        with open(filename, 'w') as file:
-            file.write(' '.join(map(str, coords)))    
-    except Exception as e:  
-        print(f"Error writing target point to file: {e}")
-
-
-def read_target_point_from_file(filename):
-    """Читает координаты точки из файла."""
-    try:        
-        with open(filename, 'r') as file:
-            content = file.read().split(' ') 
-            
-            coords = list(map(float, content))
-            print(coords)
-            return coords
-    except Exception as e:
-        print(f"Error reading target point from file: {e}")
-        return None
 
