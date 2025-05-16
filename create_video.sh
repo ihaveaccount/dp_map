@@ -17,7 +17,7 @@ fi
 
 # Получаем имя папки для имени выходного файла
 folder_name=$(basename "$input_folder")
-output_file="${folder_name}.mp4"
+output_file="frames/${folder_name}.mp4"
 
 # Проверяем наличие ffmpeg
 if ! command -v ffmpeg &> /dev/null; then
