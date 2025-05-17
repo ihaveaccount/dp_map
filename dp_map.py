@@ -19,11 +19,12 @@ parser.add_argument('--height', type=int, default=1080,
 parser.add_argument('--frames', type=int, default=3600,help='Number of frames for animation')
 
 parser.add_argument('--start', type=int, default=0,help='Start frame for animation') 
+
 parser.add_argument('--folder', type=str, default="",help='Folder to save frames')
 parser.add_argument('--pfile', type=str, default="",help='File with target point coordinates')
 parser.add_argument('--backend', type=str, default="opencl", choices=["metal", "opencl"],
                     help='Backend to use for computation (default: opencl)')
-parser.add_argument('--nocalc', action='store_true',   
+parser.add_argument('--skipcalc', action='store_true',   
                     help='Skip calculation of the map, only show angles info')
 parser.add_argument('--vertical', action='store_true', 
                     help='Use vertical orientation for the window')
@@ -86,7 +87,6 @@ theta2_max = math.pi*mody
 
 
 
-
 def save_to_file(normalized_2d_data):
     global frame_counter, frames_dir
     """ Сохраняет 2D нормализованные данные в PNG файл. """
@@ -135,29 +135,6 @@ def find_max_frame_number(directory):
     return max_num if max_num != -1 else 0
 
 
-
-
-def write_target_point_to_file(filename, coords):
-    """Записывает координаты точки в файл."""
-    try:
-        with open(filename, 'w') as file:
-            file.write(' '.join(map(str, coords)))    
-    except Exception as e:  
-        print(f"Error writing target point to file: {e}")
-
-
-def read_target_point_from_file(filename):
-    """Читает координаты точки из файла."""
-    try:        
-        with open(filename, 'r') as file:
-            content = file.read().split(' ') 
-            
-            coords = list(map(float, content))
-            print(coords)
-            return coords
-    except Exception as e:
-        print(f"Error reading target point from file: {e}")
-        return None
 
 
 
@@ -276,14 +253,13 @@ def main():
         # Первоначальный расчет и отрисовка
         print("Performing initial calculation...")
         
-        if not args.nocalc:
+        if not args.skipcalc:
             raw_data = mapper.compute_map_raw(x_min, x_max, y_min, y_max)
             current_normalized_data = mapper.normalize_data(raw_data)
         
 
             if args.anim:
                 save_to_file(current_normalized_data)    
-                   
             else:
                 current_surface = create_surface_from_normalized_data(current_normalized_data)
 
@@ -297,14 +273,15 @@ def main():
 
     if args.anim:
 
-        if(args.pfile != ""):
-                # Читаем координаты точки из файла
-            coords = read_target_point_from_file(args.pfile)
+        
+        if args.pfile != "":
+            # Читаем координаты точки и параметры маятника из файла
+            coords = read_target_point_from_file(args.pfile, pendulum)
             if coords:
                 target_point = coords
-                print(f"Target point from file: {args.pfile}")
+                print(f"Целевая точка загружена из файла: {args.pfile}")
             else:
-                print("Error reading target point from file, using default.")
+                print("Ошибка чтения целевой точки из файла, используем значения по умолчанию.")
 
 
         animation_queue.append({
@@ -342,7 +319,7 @@ def main():
 
  
                 
-                if not args.nocalc:
+                if not args.skipcalc:
                     # Пересчет карты для текущего кадра анимации
                     # Этот блок может быть медленным, если ANIMATION_FRAMES большое
                     raw_data_anim = mapper.compute_map_raw(interp_x_min, interp_x_max, interp_y_min, interp_y_max)
@@ -356,21 +333,21 @@ def main():
                     pendulum.print_params() # Вывести финальные параметры вида
                     animation_queue.pop(0)
             
-            elif anim['type'] == 'param_change':
-                prev_data = anim['prev_data_norm']
-                target_data = anim['target_data_norm']
+            # elif anim['type'] == 'param_change':
+            #     prev_data = anim['prev_data_norm']
+            #     target_data = anim['target_data_norm']
                 
-                # Блендинг между старым и новым изображением
-                blended_data = ((1 - t) * prev_data + t * target_data).astype(np.uint8)
-                current_surface = create_surface_from_normalized_data(blended_data)
+            #     # Блендинг между старым и новым изображением
+            #     blended_data = ((1 - t) * prev_data + t * target_data).astype(np.uint8)
+            #     current_surface = create_surface_from_normalized_data(blended_data)
                 
-                if anim['step'] >= anim['total_steps']:
-                    current_normalized_data = target_data.copy() # Фиксируем новое состояние
-                    current_surface = create_surface_from_normalized_data(current_normalized_data) # Финальный кадр
-                    pendulum.print_params() # Параметры маятника уже обновлены
-                    animation_queue.pop(0)
+            #     if anim['step'] >= anim['total_steps']:
+            #         current_normalized_data = target_data.copy() # Фиксируем новое состояние
+            #         current_surface = create_surface_from_normalized_data(current_normalized_data) # Финальный кадр
+            #         pendulum.print_params() # Параметры маятника уже обновлены
+            #         animation_queue.pop(0)
 
-            if(args.anim and not args.nocalc):
+            if(args.anim and not args.skipcalc):
                 save_to_file(current_normalized_data)
                 
             frame_counter += 1
@@ -459,11 +436,13 @@ def main():
                             target_x_max = data_x +  new_span_x
                             target_y_min = data_y - new_span_y
                             target_y_max = data_y +  new_span_y
-                        
-                            if(args.pfile != ""):
-                                # Записываем координаты точки в файл
-                                write_target_point_to_file(args.pfile, (target_x_min, target_x_max, target_y_min, target_y_max))
-                                print(f"Target point written to file: {args.pfile}")
+                                                    
+                            if args.pfile != "":
+                                # Записываем координаты точки и параметры маятника в файл
+                                write_target_point_to_file(args.pfile, 
+                                                    (target_x_min, target_x_max, target_y_min, target_y_max),
+                                                    pendulum)
+                                print(f"Целевая точка и параметры маятника записаны в файл: {args.pfile}")
 
 
                             print("Zooming, starting animation...")

@@ -382,3 +382,219 @@ def interpolate(anim):
 
 
 
+import json
+
+def save_pendulum_params_to_file(filename, params_dict):
+    """
+    Сохраняет параметры маятника и координаты в JSON файл.
+    
+    Args:
+        filename (str): Имя файла для сохранения
+        params_dict (dict): Словарь с параметрами маятника и координатами вида
+    
+    Returns:
+        bool: True если сохранение прошло успешно, иначе False
+    """
+    try:
+        with open(filename, 'w', encoding='utf-8') as file:
+            json.dump(params_dict, file, ensure_ascii=False, indent=4)
+        print(f"Параметры маятника успешно сохранены в '{filename}'")
+        return True
+    except Exception as e:
+        print(f"Ошибка при сохранении параметров маятника: {e}")
+        return False
+
+def load_pendulum_params_from_file(filename):
+    """
+    Загружает параметры маятника и координаты из JSON файла.
+    
+    Args:
+        filename (str): Имя файла для загрузки
+    
+    Returns:
+        dict: Словарь с параметрами маятника и координатами или None в случае ошибки
+    """
+    try:
+        with open(filename, 'r', encoding='utf-8') as file:
+            params = json.load(file)
+        print(f"Параметры маятника успешно загружены из '{filename}'")
+        return params
+    except Exception as e:
+        print(f"Ошибка при загрузке параметров маятника: {e}")
+        return None
+
+# Пример реализации метода в классе DoublePendulum (не полный код класса)
+def get_pendulum_params_dict(pendulum):
+    """
+    Создает словарь со всеми параметрами маятника и текущими координатами вида.
+    
+    Args:
+        pendulum: Экземпляр класса DoublePendulum
+    
+    Returns:
+        dict: Словарь с параметрами маятника и координатами
+    """
+    (x_min, x_max), (y_min, y_max) = pendulum.get_current_view_ranges()
+    
+    return {
+        "pendulum_params": {
+            "L1": pendulum.L1,
+            "L2": pendulum.L2,
+            "M1": pendulum.M1,
+            "M2": pendulum.M2,
+            "G": pendulum.G,
+            "DT": pendulum.DT,
+            "MAX_ITER": pendulum.MAX_ITER
+        },
+        "view_ranges": {
+            "theta1_min": x_min,
+            "theta1_max": x_max,
+            "theta2_min": y_min,
+            "theta2_max": y_max
+        }
+    }
+
+def set_pendulum_params_from_dict(pendulum, params_dict):
+    """
+    Устанавливает параметры маятника из словаря.
+    
+    Args:
+        pendulum: Экземпляр класса DoublePendulum
+        params_dict (dict): Словарь с параметрами маятника и координатами
+    
+    Returns:
+        bool: True если установка прошла успешно
+    """
+    try:
+        pendulum_params = params_dict.get("pendulum_params", {})
+        view_ranges = params_dict.get("view_ranges", {})
+        
+        # Устанавливаем параметры маятника
+        if pendulum_params:
+            pendulum.L1 = pendulum_params.get("L1", pendulum.L1)
+            pendulum.L2 = pendulum_params.get("L2", pendulum.L2)
+            pendulum.M1 = pendulum_params.get("M1", pendulum.M1)
+            pendulum.M2 = pendulum_params.get("M2", pendulum.M2)
+            pendulum.G = pendulum_params.get("G", pendulum.G)
+            pendulum.DT = pendulum_params.get("DT", pendulum.DT)
+            pendulum.MAX_ITER = pendulum_params.get("MAX_ITER", pendulum.MAX_ITER)
+        
+        # Устанавливаем диапазоны просмотра (если есть)
+        if view_ranges:
+            theta1_min = view_ranges.get("theta1_min")
+            theta1_max = view_ranges.get("theta1_max")
+            theta2_min = view_ranges.get("theta2_min")
+            theta2_max = view_ranges.get("theta2_max")
+            
+            if all(x is not None for x in [theta1_min, theta1_max, theta2_min, theta2_max]):
+                pendulum.set_current_view_ranges(theta1_min, theta1_max, theta2_min, theta2_max)
+        
+        return True
+    except Exception as e:
+        print(f"Ошибка при установке параметров маятника: {e}")
+        return False
+
+
+# Пример использования функций в основном коде
+"""
+# Пример сохранения параметров
+params_dict = get_pendulum_params_dict(pendulum)
+save_pendulum_params_to_file(args.pfile, params_dict)
+
+# Пример загрузки параметров
+params_dict = load_pendulum_params_from_file(args.pfile)
+if params_dict:
+    set_pendulum_params_from_dict(pendulum, params_dict)
+"""
+
+
+def write_target_point_to_file(filename, view_coords, pendulum=None):
+    """
+    Записывает координаты точки и параметры маятника в JSON файл.
+    
+    Args:
+        filename (str): Имя файла для сохранения
+        view_coords (tuple): (theta1_min, theta1_max, theta2_min, theta2_max)
+        pendulum: Экземпляр DoublePendulum (опционально)
+    """
+    try:
+        # Создаем базовый словарь с координатами вида
+        theta1_min, theta1_max, theta2_min, theta2_max = view_coords
+        data = {
+            "view_ranges": {
+                "theta1_min": theta1_min,
+                "theta1_max": theta1_max,
+                "theta2_min": theta2_min, 
+                "theta2_max": theta2_max
+            }
+        }
+        
+        # Если передан маятник, добавляем его параметры
+        if pendulum:
+            data["pendulum_params"] = {
+                "L1": pendulum.L1,
+                "L2": pendulum.L2,
+                "M1": pendulum.M1,
+                "M2": pendulum.M2,
+                "G": pendulum.G,
+                "DT": pendulum.DT,
+                "MAX_ITER": pendulum.MAX_ITER
+            }
+        
+        # Записываем в файл в формате JSON
+        with open(filename, 'w', encoding='utf-8') as file:
+            json.dump(data, file, ensure_ascii=False, indent=4)
+            
+        print(f"Параметры успешно сохранены в '{filename}'")
+    except Exception as e:  
+        print(f"Ошибка при записи параметров в файл: {e}")
+
+
+def read_target_point_from_file(filename, pendulum=None):
+    """
+    Читает координаты точки и параметры маятника из JSON файла.
+    
+    Args:
+        filename (str): Имя файла для чтения
+        pendulum: Экземпляр DoublePendulum (опционально) для установки параметров
+    
+    Returns:
+        tuple: (theta1_min, theta1_max, theta2_min, theta2_max) или None в случае ошибки
+    """
+    try:
+        with open(filename, 'r', encoding='utf-8') as file:
+            data = json.load(file)
+        
+        # Если переданы параметры маятника и экземпляр маятника
+        if "pendulum_params" in data and pendulum:
+            params = data["pendulum_params"]
+            pendulum.L1 = params.get("L1", pendulum.L1)
+            pendulum.L2 = params.get("L2", pendulum.L2)
+            pendulum.M1 = params.get("M1", pendulum.M1)
+            pendulum.M2 = params.get("M2", pendulum.M2)
+            pendulum.G = params.get("G", pendulum.G)
+            pendulum.DT = params.get("DT", pendulum.DT)
+            pendulum.MAX_ITER = params.get("MAX_ITER", pendulum.MAX_ITER)
+            print("Параметры маятника установлены из файла")
+        
+        # Получаем координаты
+        view_ranges = data.get("view_ranges", {})
+        if view_ranges:
+            theta1_min = view_ranges.get("theta1_min")
+            theta1_max = view_ranges.get("theta1_max")
+            theta2_min = view_ranges.get("theta2_min")
+            theta2_max = view_ranges.get("theta2_max")
+            
+            if all(x is not None for x in [theta1_min, theta1_max, theta2_min, theta2_max]):
+                return (theta1_min, theta1_max, theta2_min, theta2_max)
+        
+        # Если формат файла старый (просто список координат)
+        if isinstance(data, list) and len(data) == 4:
+            print("Обнаружен старый формат файла")
+            return tuple(data)
+        
+        print("Координаты не найдены в файле")
+        return None
+    except Exception as e:
+        print(f"Ошибка при чтении параметров из файла: {e}")
+        return None
