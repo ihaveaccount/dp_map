@@ -2,7 +2,7 @@
 
 Перед запуском:
 
-    pip install pygame pyopencl numpy pillow
+    pip install pygame pyopencl numpy pillow scipy
 
 Сначала запускаем dp_map.py без параметров, чтобы найти точку. Откроется окошко, куда можно кликать. Далее оно создаст подпапку в frames, где будет записана выбранная точка
 

@@ -6,6 +6,7 @@ import math
 import argparse 
 
 
+
 import Metal as metal
 from dp_lib import *
 import time
@@ -16,7 +17,7 @@ parser.add_argument('--anim', action='store_true',
                     help='Run predefined animation')
 parser.add_argument('--height', type=int, default=1080,
                     help='Height of the window (default: 1080)')
-parser.add_argument('--frames', type=int, default=3600,help='Number of frames for animation')
+parser.add_argument('--frames', type=int, default=1800,help='Number of frames for animation')
 
 parser.add_argument('--start', type=int, default=0,help='Start frame for animation') 
 
@@ -84,10 +85,30 @@ theta2_min = -math.pi*mody
 theta2_max = math.pi*mody
 
 
-
-
+from scipy.ndimage import median_filter
 
 def save_to_file(normalized_2d_data):
+    global frame_counter, frames_dir
+    img_data = normalized_2d_data.copy()
+    
+    # Применяем медианный фильтр 3x3 для сглаживания
+    img_data = median_filter(img_data, size=3)
+    
+    if img_data.max() <= 1.0:
+        img_data = (img_data * 255).astype(np.uint8)
+    else:
+        img_data = img_data.astype(np.uint8)
+    
+    height, width = img_data.shape
+    rgb_data = np.zeros((height, width, 3), dtype=np.uint8)
+    rgb_data[:, :, :] = img_data[..., np.newaxis]
+    
+    img = Image.fromarray(rgb_data)
+    filename = os.path.join(frames_dir, f"frame_{frame_counter:05d}.png")
+    img.save(filename)
+
+
+def save_to_file_old(normalized_2d_data):
     global frame_counter, frames_dir
     """ Сохраняет 2D нормализованные данные в PNG файл. """
     # Импортируем PIL вместо pygame
@@ -225,6 +246,10 @@ def main():
     
         return
                 
+    total_render_time = 0
+    render_time_history = []
+
+
 
     pendulum = DoublePendulum(L1=L1, 
                               L2=L2, 
@@ -347,21 +372,40 @@ def main():
             #         pendulum.print_params() # Параметры маятника уже обновлены
             #         animation_queue.pop(0)
 
-            if(args.anim and not args.skipcalc):
-                save_to_file(current_normalized_data)
+                if(args.anim and not args.skipcalc):
+                    save_to_file(current_normalized_data)
+                        
+                    frame_counter += 1
                 
-            frame_counter += 1
-            end_time = time.time()
+                end_time = time.time()
 
-            # Вычисляем прошедшее время и форматируем вывод
-            elapsed_time = end_time - start_time
-            elapsed_total_time = total_time - end_time
-            estimated_time = round(elapsed_time * (anim['total_steps'] - anim['step'])/3600, 2)
-            
-            viewing_degree_angle = math.degrees(interp_x_max-interp_x_min)
-            timestamp = frame_counter/30
-            print(f"Rendered {(frame_counter-1):05d}, angle {viewing_degree_angle}, at {timestamp:.3f}s, rendered for {elapsed_time:.3f}s estimated: {estimated_time:.2f} hours")
 
+                elapsed_time = end_time - start_time
+                render_time_history.append(elapsed_time)
+                total_render_time += elapsed_time
+
+                avg_frame_time = total_render_time / len(render_time_history)
+                remaining_frames = anim['total_steps'] - anim['step']
+
+                # Расчет общего времени в секундах и преобразование
+                total_seconds = avg_frame_time * remaining_frames
+                hours = int(total_seconds // 3600)
+                minutes = int((total_seconds % 3600) // 60)
+                seconds = int(total_seconds % 60)
+                estimated_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+                progress_percent = (anim['step'] / anim['total_steps']) * 100
+                frames_per_second = (1.0 / avg_frame_time)*60 if avg_frame_time > 0 else 0
+                viewing_degree_angle = math.degrees(interp_x_max-interp_x_min)
+                timestamp = frame_counter/30
+
+                print(f"Done {(frame_counter-1):05d}/{anim['total_steps']}\t"
+                    f"{viewing_degree_angle}° @ TS {timestamp:.3f}s\t"
+                    f"rendered {elapsed_time:.3f}s @ "
+                    f"{frames_per_second:.2f}fpm\t"
+                    f"elapsed {estimated_time_str} "
+                    f"({progress_percent:.1f}%)"
+                    )
             rendered_frames +=1
 
         elif(args.anim and frame_counter > 0):

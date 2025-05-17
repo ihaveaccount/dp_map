@@ -8,6 +8,7 @@ import pathlib
 import re
 from PIL import Image
 import ctypes
+from scipy.ndimage import median_filter
 
 # --- Интерфейс IMappable и его реализация ---
 class IMappable:
@@ -151,7 +152,7 @@ class MapperOpenCL:
         
         return self.raw_results_np.copy() # Возвращаем копию, чтобы избежать проблем с изменением
 
-    def normalize_data(self, raw_data):
+    def normalize_data_old(self, raw_data):
         """ Нормализует сырые данные (логарифм + min-max масштабирование в 0-255). """
         # Применяем натуральный логарифм (log1p для обработки нулей: log(1+x))
         log_data = np.log1p(raw_data.astype(np.double))
@@ -167,26 +168,21 @@ class MapperOpenCL:
         normalized_data = np.clip(normalized_data, 0, 255).astype(np.uint8)
         return normalized_data.reshape((self.height, self.width))
 
-
-
+    def normalize_data(self, raw_data):
+        log_data = np.log1p(raw_data.astype(np.float64))
+       #log_data = np.sqrt(raw_data.astype(np.double))
+        # Используем 1-й и 99-й перцентили для отсечения выбросов
+        min_val = np.percentile(log_data, 1)
+        max_val = np.percentile(log_data, 95)
+        if max_val <= min_val:
+            return np.zeros_like(log_data, dtype=np.uint8)
+        normalized = 255 * (log_data - min_val) / (max_val - min_val)
+        normalized = np.clip(normalized, 0, 255).astype(np.uint8)
+        return normalized.reshape((self.height, self.width))
 
 
  
-    def normalize_data(self, raw_data):
-        """ Нормализует сырые данные (логарифм + min-max масштабирование в 0-255). """
-        # Применяем натуральный логарифм (log1p для обработки нулей: log(1+x))
-        log_data = np.log1p(raw_data.astype(np.float64))
-
-        min_log_val = np.min(log_data)
-        max_log_val = np.max(log_data)
-        
-        if max_log_val == min_log_val: # Если все значения одинаковы
-            normalized_data = np.zeros_like(log_data, dtype=np.uint8)
-        else:
-            normalized_data = 255 * (log_data - min_log_val) / (max_log_val - min_log_val)
-        
-        normalized_data = np.clip(normalized_data, 0, 255).astype(np.uint8)
-        return normalized_data.reshape((self.height, self.width))
+ 
 
 class MapperMetal:
     def __init__(self, width, height, mappable_function):
@@ -384,128 +380,7 @@ def interpolate(anim):
 
 import json
 
-def save_pendulum_params_to_file(filename, params_dict):
-    """
-    Сохраняет параметры маятника и координаты в JSON файл.
-    
-    Args:
-        filename (str): Имя файла для сохранения
-        params_dict (dict): Словарь с параметрами маятника и координатами вида
-    
-    Returns:
-        bool: True если сохранение прошло успешно, иначе False
-    """
-    try:
-        with open(filename, 'w', encoding='utf-8') as file:
-            json.dump(params_dict, file, ensure_ascii=False, indent=4)
-        print(f"Параметры маятника успешно сохранены в '{filename}'")
-        return True
-    except Exception as e:
-        print(f"Ошибка при сохранении параметров маятника: {e}")
-        return False
 
-def load_pendulum_params_from_file(filename):
-    """
-    Загружает параметры маятника и координаты из JSON файла.
-    
-    Args:
-        filename (str): Имя файла для загрузки
-    
-    Returns:
-        dict: Словарь с параметрами маятника и координатами или None в случае ошибки
-    """
-    try:
-        with open(filename, 'r', encoding='utf-8') as file:
-            params = json.load(file)
-        print(f"Параметры маятника успешно загружены из '{filename}'")
-        return params
-    except Exception as e:
-        print(f"Ошибка при загрузке параметров маятника: {e}")
-        return None
-
-# Пример реализации метода в классе DoublePendulum (не полный код класса)
-def get_pendulum_params_dict(pendulum):
-    """
-    Создает словарь со всеми параметрами маятника и текущими координатами вида.
-    
-    Args:
-        pendulum: Экземпляр класса DoublePendulum
-    
-    Returns:
-        dict: Словарь с параметрами маятника и координатами
-    """
-    (x_min, x_max), (y_min, y_max) = pendulum.get_current_view_ranges()
-    
-    return {
-        "pendulum_params": {
-            "L1": pendulum.L1,
-            "L2": pendulum.L2,
-            "M1": pendulum.M1,
-            "M2": pendulum.M2,
-            "G": pendulum.G,
-            "DT": pendulum.DT,
-            "MAX_ITER": pendulum.MAX_ITER
-        },
-        "view_ranges": {
-            "theta1_min": x_min,
-            "theta1_max": x_max,
-            "theta2_min": y_min,
-            "theta2_max": y_max
-        }
-    }
-
-def set_pendulum_params_from_dict(pendulum, params_dict):
-    """
-    Устанавливает параметры маятника из словаря.
-    
-    Args:
-        pendulum: Экземпляр класса DoublePendulum
-        params_dict (dict): Словарь с параметрами маятника и координатами
-    
-    Returns:
-        bool: True если установка прошла успешно
-    """
-    try:
-        pendulum_params = params_dict.get("pendulum_params", {})
-        view_ranges = params_dict.get("view_ranges", {})
-        
-        # Устанавливаем параметры маятника
-        if pendulum_params:
-            pendulum.L1 = pendulum_params.get("L1", pendulum.L1)
-            pendulum.L2 = pendulum_params.get("L2", pendulum.L2)
-            pendulum.M1 = pendulum_params.get("M1", pendulum.M1)
-            pendulum.M2 = pendulum_params.get("M2", pendulum.M2)
-            pendulum.G = pendulum_params.get("G", pendulum.G)
-            pendulum.DT = pendulum_params.get("DT", pendulum.DT)
-            pendulum.MAX_ITER = pendulum_params.get("MAX_ITER", pendulum.MAX_ITER)
-        
-        # Устанавливаем диапазоны просмотра (если есть)
-        if view_ranges:
-            theta1_min = view_ranges.get("theta1_min")
-            theta1_max = view_ranges.get("theta1_max")
-            theta2_min = view_ranges.get("theta2_min")
-            theta2_max = view_ranges.get("theta2_max")
-            
-            if all(x is not None for x in [theta1_min, theta1_max, theta2_min, theta2_max]):
-                pendulum.set_current_view_ranges(theta1_min, theta1_max, theta2_min, theta2_max)
-        
-        return True
-    except Exception as e:
-        print(f"Ошибка при установке параметров маятника: {e}")
-        return False
-
-
-# Пример использования функций в основном коде
-"""
-# Пример сохранения параметров
-params_dict = get_pendulum_params_dict(pendulum)
-save_pendulum_params_to_file(args.pfile, params_dict)
-
-# Пример загрузки параметров
-params_dict = load_pendulum_params_from_file(args.pfile)
-if params_dict:
-    set_pendulum_params_from_dict(pendulum, params_dict)
-"""
 
 
 def write_target_point_to_file(filename, view_coords, pendulum=None):
@@ -598,3 +473,6 @@ def read_target_point_from_file(filename, pendulum=None):
     except Exception as e:
         print(f"Ошибка при чтении параметров из файла: {e}")
         return None
+    
+
+
