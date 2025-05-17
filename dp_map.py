@@ -25,7 +25,15 @@ parser.add_argument('--backend', type=str, default="opencl", choices=["metal", "
                     help='Backend to use for computation (default: opencl)')
 parser.add_argument('--nocalc', action='store_true',   
                     help='Skip calculation of the map, only show angles info')
-
+parser.add_argument('--vertical', action='store_true', 
+                    help='Use vertical orientation for the window')
+parser.add_argument('--m1', type=float, default=1.0, help='Mass of the first pendulum (default: 1.0)')
+parser.add_argument('--m2', type=float, default=1.0, help='Mass of the second pendulum (default: 1.0)')
+parser.add_argument('--l1', type=float, default=1.0, help='Length of the first pendulum (default: 1.0)')
+parser.add_argument('--l2', type=float, default=1.0, help='Length of the second pendulum (default: 1.0)')
+parser.add_argument('--g', type=float, default=9.81, help='Gravitational acceleration (default: 9.81)')
+parser.add_argument('--dt', type=float, default=0.2, help='Time step (default: 0.2)')
+parser.add_argument('--iter', type=int, default=5000, help='Number of iterations (default: 5000)')
 
 args = parser.parse_args()
 
@@ -39,7 +47,11 @@ if(args.backend == "metal"):
         print(f"Default Metal device: {device.name()}")
 
 
-wid = round(args.height*1.777);
+if args.vertical:
+    wid = round(args.height/1.777);
+else:
+    wid = round(args.height*1.777);
+
 
 if wid %2 != 0: wid += 1
 
@@ -47,11 +59,23 @@ if wid %2 != 0: wid += 1
 WIDTH, HEIGHT = wid, args.height
 
 ANIMATION_FRAMES = 1 # Количество кадров для анимации зума/изменения параметров
-ANIMATION_FRAMES_OUT = 2   # Количество кадров для анимации выхода из зума/изменения параметров
+ANIMATION_FRAMES_OUT = 1   # Количество кадров для анимации выхода из зума/изменения параметров
 ZOOM_FACTOR = 0.1       # Коэффициент зума при клике мыши  
 
-modx = 1.78
-mody = modx * (HEIGHT / WIDTH)
+L1=args.l1
+L2=args.l2
+M1=args.m1
+M2=args.m2
+G=args.g
+DT=args.dt
+ITER=args.iter
+
+if args.vertical:
+    mody = 1.7777
+    modx = 1 # Соотношение сторон для нормализации данных
+else:
+    modx = 1.78
+    mody = modx * (HEIGHT / WIDTH)
 
 theta1_min = -math.pi*modx
 theta1_max = math.pi*modx
@@ -225,14 +249,17 @@ def main():
         return
                 
 
-    pendulum = DoublePendulum(L1=1.0, 
-                              L2=1.0, 
-                              M1=1.0, 
-                              M2=1.0, 
-                              G=9.81, 
-                              DT=0.2, 
-                              MAX_ITER=5000, 
-                              theta1_min=theta1_min, theta1_max=theta1_max, theta2_min=theta2_min, theta2_max=theta2_max)
+    pendulum = DoublePendulum(L1=L1, 
+                              L2=L2, 
+                              M1=M1, 
+                              M2=M2, 
+                              G=G, 
+                              DT=DT, 
+                              MAX_ITER=ITER, 
+                              theta1_min=theta1_min, 
+                              theta1_max=theta1_max, 
+                              theta2_min=theta2_min, 
+                              theta2_max=theta2_max)
     
     
     
@@ -280,9 +307,12 @@ def main():
                 print("Error reading target point from file, using default.")
 
 
-        animation_queue.append({'type': 'zoom','start_view': (x_min, x_max, y_min, y_max),
+        animation_queue.append({
+                            'type': 'zoom',
+                            'start_view': (x_min, x_max, y_min, y_max),
                             'target_view': target_point,
-                            'step': frame_counter, 'total_steps': args.frames})
+                            'step': frame_counter, 
+                            'total_steps': args.frames})
         
 
     total_time = time.time()
@@ -326,19 +356,19 @@ def main():
                     pendulum.print_params() # Вывести финальные параметры вида
                     animation_queue.pop(0)
             
-            # elif anim['type'] == 'param_change':
-            #     prev_data = anim['prev_data_norm']
-            #     target_data = anim['target_data_norm']
+            elif anim['type'] == 'param_change':
+                prev_data = anim['prev_data_norm']
+                target_data = anim['target_data_norm']
                 
-            #     # Блендинг между старым и новым изображением
-            #     blended_data = ((1 - t) * prev_data + t * target_data).astype(np.uint8)
-            #     current_surface = create_surface_from_normalized_data(blended_data)
+                # Блендинг между старым и новым изображением
+                blended_data = ((1 - t) * prev_data + t * target_data).astype(np.uint8)
+                current_surface = create_surface_from_normalized_data(blended_data)
                 
-            #     if anim['step'] >= anim['total_steps']:
-            #         current_normalized_data = target_data.copy() # Фиксируем новое состояние
-            #         current_surface = create_surface_from_normalized_data(current_normalized_data) # Финальный кадр
-            #         pendulum.print_params() # Параметры маятника уже обновлены
-            #         animation_queue.pop(0)
+                if anim['step'] >= anim['total_steps']:
+                    current_normalized_data = target_data.copy() # Фиксируем новое состояние
+                    current_surface = create_surface_from_normalized_data(current_normalized_data) # Финальный кадр
+                    pendulum.print_params() # Параметры маятника уже обновлены
+                    animation_queue.pop(0)
 
             if(args.anim and not args.nocalc):
                 save_to_file(current_normalized_data)
