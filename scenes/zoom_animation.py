@@ -8,8 +8,8 @@ DEFAULT_SCREEN_WIDTH = 1920
 DEFAULT_SCREEN_HEIGHT = 1080
 FPS = 60
 DEFAULT_TARGET_PIXEL_SIZE = 5
-DEFAULT_STAGE1_ZOOM_SPEED = 1.03  # Скорость для Этапа 1 (масштабирование), > 1.0
-DEFAULT_STAGE2_SPACING_SPEED = 1.05 # Скорость для Этапа 2 (расстояния), > 1.0
+DEFAULT_STAGE1_ZOOM_SPEED = 1.014 # Скорость для Этапа 1 (масштабирование), > 1.0
+DEFAULT_STAGE2_SPACING_SPEED = 1.014 # Скорость для Этапа 2 (расстояния), > 1.0
 
 # Цвета
 BLACK = (0, 0, 0)
@@ -141,8 +141,12 @@ def start_animation(click_pos_screen):
     original_img_width = original_image.get_width()
     original_img_height = original_image.get_height()
 
-    ox = (click_pos_screen[0] / SCREEN_WIDTH) * original_img_width
-    oy = (click_pos_screen[1] / SCREEN_HEIGHT) * original_img_height
+    img_center_x = original_img_width / 2.0
+    img_center_y = original_img_height / 2.0
+
+
+    ox = (img_center_x / SCREEN_WIDTH) * original_img_width
+    oy = (img_center_y / SCREEN_HEIGHT) * original_img_height
     
     target_pixel_on_original_image_coords = (ox, oy)
 

@@ -23,6 +23,8 @@ parser.add_argument('--folder', type=str, default="",help='Folder to save frames
 parser.add_argument('--pfile', type=str, default="",help='File with target point coordinates')
 parser.add_argument('--backend', type=str, default="opencl", choices=["metal", "opencl"],
                     help='Backend to use for computation (default: opencl)')
+parser.add_argument('--nocalc', action='store_true',   
+                    help='Skip calculation of the map, only show angles info')
 
 
 args = parser.parse_args()
@@ -91,7 +93,7 @@ def save_to_file(normalized_2d_data):
 
     img.save(filename)
     
-    frame_counter += 1
+    
     #return output_path
 
 
@@ -146,19 +148,6 @@ def create_surface_from_normalized_data(normalized_2d_data):
     return pygame.surfarray.make_surface(image_data_rgb.transpose(1,0,2))
 
 
-
-
-def process_normalized_data(normalized_2d_data):
-    
-    if args.anim:
-        save_to_file(normalized_2d_data)
-    else:
-        # Создаем Pygame Surface из нормализованных данных
-        surface = create_surface_from_normalized_data(normalized_2d_data)
-        return surface
-    
-    
-    
 
 
 
@@ -260,14 +249,16 @@ def main():
         # Первоначальный расчет и отрисовка
         print("Performing initial calculation...")
         
-        raw_data = mapper.compute_map_raw(x_min, x_max, y_min, y_max)
-        current_normalized_data = mapper.normalize_data(raw_data)
+        if not args.nocalc:
+            raw_data = mapper.compute_map_raw(x_min, x_max, y_min, y_max)
+            current_normalized_data = mapper.normalize_data(raw_data)
         
 
-        if args.anim:
-            save_to_file(current_normalized_data)            
-        else:
-            current_surface = create_surface_from_normalized_data(current_normalized_data)
+            if args.anim:
+                save_to_file(current_normalized_data)    
+                   
+            else:
+                current_surface = create_surface_from_normalized_data(current_normalized_data)
 
 
       
@@ -321,14 +312,14 @@ def main():
 
  
                 
-
-                # Пересчет карты для текущего кадра анимации
-                # Этот блок может быть медленным, если ANIMATION_FRAMES большое
-                raw_data_anim = mapper.compute_map_raw(interp_x_min, interp_x_max, interp_y_min, interp_y_max)
-                current_normalized_data = mapper.normalize_data(raw_data_anim) # Обновляем глобальные данные
-                
-                if not args.anim:
-                    current_surface = create_surface_from_normalized_data(current_normalized_data)
+                if not args.nocalc:
+                    # Пересчет карты для текущего кадра анимации
+                    # Этот блок может быть медленным, если ANIMATION_FRAMES большое
+                    raw_data_anim = mapper.compute_map_raw(interp_x_min, interp_x_max, interp_y_min, interp_y_max)
+                    current_normalized_data = mapper.normalize_data(raw_data_anim) # Обновляем глобальные данные
+                    
+                    if not args.anim:
+                        current_surface = create_surface_from_normalized_data(current_normalized_data)
                 
                 if anim['step'] >= anim['total_steps']:
                     pendulum.set_current_view_ranges(target_vx_min, target_vx_max, target_vy_min, target_vy_max)
@@ -349,9 +340,10 @@ def main():
             #         pendulum.print_params() # Параметры маятника уже обновлены
             #         animation_queue.pop(0)
 
-            if(args.anim):
+            if(args.anim and not args.nocalc):
                 save_to_file(current_normalized_data)
-
+                
+            frame_counter += 1
             end_time = time.time()
 
             # Вычисляем прошедшее время и форматируем вывод
@@ -359,7 +351,9 @@ def main():
             elapsed_total_time = total_time - end_time
             estimated_time = round(elapsed_time * (anim['total_steps'] - anim['step'])/3600, 2)
             
-            print(f"Rendered {(frame_counter-1):05d} at {elapsed_time:.3f}s, estimated: {estimated_time:.2f} hours")
+            viewing_degree_angle = math.degrees(interp_x_max-interp_x_min)
+            timestamp = frame_counter/30
+            print(f"Rendered {(frame_counter-1):05d}, angle {viewing_degree_angle}, at {timestamp:.3f}s, rendered for {elapsed_time:.3f}s estimated: {estimated_time:.2f} hours")
 
             rendered_frames +=1
 
