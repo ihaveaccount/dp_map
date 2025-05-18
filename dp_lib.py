@@ -129,29 +129,27 @@ class Mapper:
         return self.normalized_data
 
     
-    def save_state(self, filename, target_point=None):
+    def save_state(self, filename, target_view=None):
         state = {
-            "params": self.params,
-            "target_point": target_point
+            "params": self.params.copy(),
+            "target_view": target_view
         }
         with open(filename, 'w') as f:
             json.dump(state, f, indent=2)
 
     @classmethod
     def load_state(cls, filename, existing_mapper=None):
-        """Загружает состояние в существующий экземпляр Mapper"""
         with open(filename) as f:
             state = json.load(f)
         
-        # Если передан существующий маппер - обновляем его параметры
-        if existing_mapper:
-            existing_mapper.params.update(state.get("params", {}))
-            return existing_mapper, state.get("target_point")
+        target_view = state.get("target_view")
+        params = state.get("params", {})
         
-        # Для обратной совместимости (лучше всегда использовать existing_mapper)
-        dummy_mapper = cls(1, 1, state.get("params"))
-        return dummy_mapper, state.get("target_point")
-    
+        if existing_mapper:
+            existing_mapper.params.update(params)
+            return existing_mapper, target_view
+        
+        return cls(1, 1, params), target_view    
 
     def get_current_view(self):
         return self.params["current_view"]

@@ -17,7 +17,7 @@ Run the animation with the test point:
  - --folder - name of subfolder in frames/, where the point for animation lies and which will contain the final frames. By default will be created with the current date
  - --pfile - path to the file with the point, by default frames/[folder]/point.txt
  - --start - start from a specific frame, by default continues from the png number in the folder
- - --backend - opencl or metal. Default is opencl, metal doesn't work yet.
+ - --kernel - path to opencl kerne
  -  --nocalc - show only rendering log with degrees and timestamps, no calculations.
  - --vertical - make vertical video
  - m1=1, m2=1, l1=1, l2=1, g=9.81, dt=0.2, iter=5000 - pendulum parameters.

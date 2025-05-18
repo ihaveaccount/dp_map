@@ -113,14 +113,6 @@ def find_max_frame_number(directory):
     return max_num if max_num != -1 else 0
 
 
-
-
-
-
-
-
-
-
  
 
 # --- Глобальные переменные для анимации и сохранения ---
@@ -264,21 +256,40 @@ def main():
     if args.anim:
 
         if args.pfile != "":
-            # Читаем координаты точки и параметры маятника из файла 
+            # Сохраняем начальные параметры ДО загрузки файла
+            initial_params = {
+                'L1': L1,
+                'L2': L2,
+                'M1': M1,
+                'M2': M2,
+                'G': G,
+                'DT': DT,
+                'MAX_ITER': ITER
+            }
+            
+
+            # Загружаем параметры ИЗ ФАЙЛА в маппер
             mapper, coords = Mapper.load_state(args.pfile, existing_mapper=mapper)
-            if coords:
-                target_point = coords
-                print(f"Целевая точка загружена из файла: {args.pfile}")
-            else:
-                print("Ошибка чтения целевой точки из файла, используем значения по умолчанию.")
-
-
-        animation_queue.append({
-                            'type': 'zoom',
-                            'start_view': (x_min, x_max, y_min, y_max),
-                            'target_view': target_point,
-                            'step': frame_counter, 
-                            'total_steps': args.frames})
+            
+            # Получаем целевые параметры ИЗ ЗАГРУЖЕННОГО СОСТОЯНИЯ
+            target_params = mapper.params.copy()
+            
+            # Добавляем комбинированную анимацию
+            animation_queue.append({
+                'type': 'combined',
+                'start_view': (x_min, x_max, y_min, y_max),  # Начальный вид
+                'target_view': coords,                        # Вид из файла
+                'start_params': initial_params,               # Параметры до загрузки
+                'target_params': target_params,               # Параметры из файла
+                'step': args.start,
+                'total_steps': args.frames
+            })
+        # animation_queue.append({
+        #                     'type': 'zoom',
+        #                     'start_view': (x_min, x_max, y_min, y_max),
+        #                     'target_view': target_point,
+        #                     'step': frame_counter, 
+        #                     'total_steps': args.frames})
         
 
     total_time = time.time()
@@ -293,21 +304,41 @@ def main():
             anim['step'] += 1
             t = anim['step'] / anim['total_steps']
           
-            
+            if anim['type'] == 'zoom':
  
-            # Начальные и целевые границы
-            if anim['target_view']:
-                target_vx_min, target_vx_max, target_vy_min, target_vy_max = anim['target_view']
+                # Начальные и целевые границы
+                if anim['target_view']:
+                    target_vx_min, target_vx_max, target_vy_min, target_vy_max = anim['target_view']
+                    interp_x_min, interp_x_max, interp_y_min, interp_y_max = mapper.interpolate_zoom(anim)
+                    mapper.set_current_view(interp_x_min, interp_x_max, interp_y_min, interp_y_max)   
+
+
+
+            if anim['type'] == 'combined':
+                # Интерполяция параметров
+
+
+                current_params = {}
+                for key in anim['start_params']:
+                    start = anim['start_params'][key]
+                    target = anim['target_params'].get(key, start)  # Безопасный доступ
+                    current_params[key] = start + (target - start) * t
+
+                
+                # Интерполяция зума
                 interp_x_min, interp_x_max, interp_y_min, interp_y_max = mapper.interpolate_zoom(anim)
-                mapper.set_current_view(interp_x_min, interp_x_max, interp_y_min, interp_y_max)   
+                
+                # Обновляем маппер
+                mapper.params.update(current_params)
+                mapper.set_current_view(interp_x_min, interp_x_max, interp_y_min, interp_y_max)
 
 
+
+
+            # Завершение анимации
             if anim['step'] >= anim['total_steps']:
-                # Устанавливаем финальные параметры
                 mapper.set_current_view(target_vx_min, target_vx_max, target_vy_min, target_vy_max)
                 animation_queue.pop(0)
-
-
 
             start_time = time.time()
             rgb_data = mapper.calc_and_get_rgb_data()
@@ -412,7 +443,7 @@ def main():
                                                     
                             if args.pfile != "":
                                 # Записываем координаты точки и параметры маятника в файл
-                                mapper.save_state(args.pfile, target_point=(target_x_min, target_x_max, target_y_min, target_y_max))
+                                mapper.save_state(args.pfile, target_view=(target_x_min, target_x_max, target_y_min, target_y_max))
                                                     
                                 print(f"Целевая точка и параметры маятника записаны в файл: {args.pfile}")
 
