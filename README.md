@@ -1,27 +1,27 @@
 # DP map
 
-Перед запуском:
+Before launching:
 
     pip install pygame pyopencl numpy pillow scipy
 
-Сначала запускаем dp_map.py без параметров, чтобы найти точку. Откроется окошко, куда можно кликать. Далее оно создаст подпапку в frames, где будет записана выбранная точка
+First run dp_map.py without parameters to find the point. It will open a window where you can click. Then it will create a subfolder in frames/, where the selected point will be recorded
 
-запуск aнимации с тестовой точкой:
+Run the animation with the test point:
 
     python dp_map.py --pfile testpoint.txt --anim --folder testpoint
 
-## Параметры
- - --anim - включить анимацию. Графика на экран не выводится
- - --height 1080 - вертикальное разрешение
- - --frames 3600 - количество кадров для анимации
- - --folder  - имя подпапки во frames/, в которой лежит точка для анимации и которая будет содержать итоговые кадры. По-умолчанию создастся с текущей датой
- - --pfile - путь до файла с точкой, по-умолчанию frames/[folder]/point.txt
- - --start - начать с определенного кадра, по-умолчанию продолжает от номера png в папке
- - --backend - opencl или metal. По-умолчанию opencl, metal пока не работает
- - --nocalc - показать только лог рендеринга с градусами и таймстемпами, без расчетов
- - --vertical - сделать вертикальное видео
- - m1=1, m2=1, l1=1, l2=1, g=9.81, dt=0.2, iter=5000 - параметры маятника 
+## Parameters
+ - --anim - enable animation rendering. No graphics are displayed on the screen. Frames will be written in selected folder
+ - --height 1080 - vertical resolution
+ - --frames 1800 - number of frames for animation
+ - --folder - name of subfolder in frames/, where the point for animation lies and which will contain the final frames. By default will be created with the current date
+ - --pfile - path to the file with the point, by default frames/[folder]/point.txt
+ - --start - start from a specific frame, by default continues from the png number in the folder
+ - --backend - opencl or metal. Default is opencl, metal doesn't work yet.
+ -  --nocalc - show only rendering log with degrees and timestamps, no calculations.
+ - --vertical - make vertical video
+ - m1=1, m2=1, l1=1, l2=1, g=9.81, dt=0.2, iter=5000 - pendulum parameters.
 
- ## create_video.sh
+ ## create_video.sh - wrapper for ffmpeg
 
     create_video.sh path/to/folder

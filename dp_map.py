@@ -59,7 +59,7 @@ WIDTH, HEIGHT = wid, args.height
 ANIMATION_FRAMES = 1 # Количество кадров для анимации зума/изменения параметров
 ANIMATION_FRAMES_OUT = 1   # Количество кадров для анимации выхода из зума/изменения параметров
 ZOOM_FACTOR = 0.1       # Коэффициент зума при клике мыши  
-
+PARAM_CHANGE_STEPS = 10 # Количество кадров для изменения параметров
 L1=args.l1
 L2=args.l2
 M1=args.m1
@@ -80,40 +80,21 @@ x_max = math.pi*modx
 y_min = -math.pi*mody
 y_max = math.pi*mody
 
-
+frame_counter = 0
 
 
 from scipy.ndimage import median_filter
 
-def save_to_file(normalized_2d_data):
+
+
+
+def save_to_file(rgb_data):
     global frame_counter, frames_dir
-    img_data = normalized_2d_data.copy()
-    
-    # Применяем медианный фильтр 3x3 для сглаживания
-    img_data = median_filter(img_data, size=3)
-    
-    if img_data.max() <= 1.0:
-        img_data = (img_data * 255).astype(np.uint8)
-    else:
-        img_data = img_data.astype(np.uint8)
-    
-    height, width = img_data.shape
-    rgb_data = np.zeros((height, width, 3), dtype=np.uint8)
-    rgb_data[:, :, :] = img_data[..., np.newaxis]
     
     img = Image.fromarray(rgb_data)
     filename = os.path.join(frames_dir, f"frame_{frame_counter:05d}.png")
     img.save(filename)
 
-def create_surface_from_normalized_data(normalized_2d_data):
-
-    image_data_rgb = np.empty((HEIGHT, WIDTH, 3), dtype=np.uint8)
-    """ Создает Pygame Surface из 2D нормализованных данных (яркость). """
-    image_data_rgb[:, :, 0] = normalized_2d_data
-    image_data_rgb[:, :, 1] = normalized_2d_data
-    image_data_rgb[:, :, 2] = normalized_2d_data
-    # Pygame ожидает (width, height, channels)
-    return pygame.surfarray.make_surface(image_data_rgb.transpose(1,0,2))
 
 
 
@@ -134,16 +115,6 @@ def find_max_frame_number(directory):
 
 
 
-
-def create_surface_from_normalized_data(normalized_2d_data):
-
-    image_data_rgb = np.empty((HEIGHT, WIDTH, 3), dtype=np.uint8)
-    """ Создает Pygame Surface из 2D нормализованных данных (яркость). """
-    image_data_rgb[:, :, 0] = normalized_2d_data
-    image_data_rgb[:, :, 1] = normalized_2d_data
-    image_data_rgb[:, :, 2] = normalized_2d_data
-    # Pygame ожидает (width, height, channels)
-    return pygame.surfarray.make_surface(image_data_rgb.transpose(1,0,2))
 
 
 
@@ -173,11 +144,11 @@ def setup_frame_saving():
         frames_dir = os.path.join(base_dir, args.folder)
 
     if not args.pfile:
-        args.pfile = os.path.join(frames_dir, "point.txt")
+        args.pfile = os.path.join(frames_dir, "point.json")
 
     if(args.start > 0):
         frame_counter = args.start
-    else:
+    elif args.anim:
         # Ищем максимальный номер кадра в папке
         max_frame_number = find_max_frame_number(frames_dir)
 
@@ -194,17 +165,23 @@ def setup_frame_saving():
     os.makedirs(frames_dir, exist_ok=True)
     print(f"Saving frames to: {frames_dir}")
 
-def save_current_frame(surface):
-    global frame_counter
-    if not frames_dir:
-        setup_frame_saving()
+
+
+def save_to_file(rgb_data):
+    """Сохраняет обработанные данные в файл"""
+    global frame_counter, frames_dir
     
     
+    img = Image.fromarray(rgb_data)
     filename = os.path.join(frames_dir, f"frame_{frame_counter:05d}.png")
-    pygame.image.save(surface, filename)
-    frame_counter += 1
+    img.save(filename)
+   
 
-
+def create_surface_from_normalized_data(rgb_data):
+    """Создает поверхность Pygame из обработанных данных"""
+    
+    # Транспонируем оси для совместимости с Pygame (width, height, channels)
+    return pygame.surfarray.make_surface(rgb_data.transpose(1, 0, 2))
 
 
 def main():
@@ -266,17 +243,15 @@ def main():
         # Первоначальный расчет и отрисовка
         print("Performing initial calculation...")
         
-        if not args.skipcalc:
+        if not args.skipcalc:           
             
-            
-            current_normalized_data = mapper.normalize_data(mapper.compute_map())
-        
-
+            rgb_data = mapper.calc_and_get_rgb_data()
 
             if args.anim:
-                save_to_file(current_normalized_data)    
+                save_to_file(rgb_data)
+                frame_counter += 1
             else:
-                current_surface = create_surface_from_normalized_data(current_normalized_data)
+                current_surface = create_surface_from_normalized_data(rgb_data)
 
 
       
@@ -318,86 +293,68 @@ def main():
             anim['step'] += 1
             t = anim['step'] / anim['total_steps']
           
-
-            if anim['type'] == 'zoom':
- 
-                # Начальные и целевые границы
-                
-                target_vx_min, target_vx_max, target_vy_min, target_vy_max = anim['target_view']
-                interp_x_min, interp_x_max, interp_y_min, interp_y_max = mapper.interpolate(anim)
-
-                # Начинаем отсчет времени
-                start_time = time.time()
-
- 
-                
-                if not args.skipcalc:
-                    # Пересчет карты для текущего кадра анимации
-                    # Этот блок может быть медленным, если ANIMATION_FRAMES большое
-                    mapper.set_current_view(interp_x_min, interp_x_max, interp_y_min, interp_y_max)
-                    
-                    current_normalized_data = mapper.normalize_data(mapper.compute_map()) # Обновляем глобальные данные
-                    
- 
-                    if not args.anim:
-                        current_surface = create_surface_from_normalized_data(current_normalized_data)
-                
-                if anim['step'] >= anim['total_steps']:
-                    mapper.set_current_view(target_vx_min, target_vx_max, target_vy_min, target_vy_max)
-                    # mapper.print_params() # Вывести финальные параметры вида
-                    animation_queue.pop(0)
             
-            # elif anim['type'] == 'param_change':
-            #     prev_data = anim['prev_data_norm']
-            #     target_data = anim['target_data_norm']
-                
-            #     # Блендинг между старым и новым изображением
-            #     blended_data = ((1 - t) * prev_data + t * target_data).astype(np.uint8)
-            #     current_surface = create_surface_from_normalized_data(blended_data)
-                
-            #     if anim['step'] >= anim['total_steps']:
-            #         current_normalized_data = target_data.copy() # Фиксируем новое состояние
-            #         current_surface = create_surface_from_normalized_data(current_normalized_data) # Финальный кадр
-            #         mapper.print_params() # Параметры маятника уже обновлены
-            #         animation_queue.pop(0)
-
-                if(args.anim and not args.skipcalc):
-                    save_to_file(current_normalized_data)
-                        
-                    frame_counter += 1
-                
-                end_time = time.time()
+ 
+            # Начальные и целевые границы
+            if anim['target_view']:
+                target_vx_min, target_vx_max, target_vy_min, target_vy_max = anim['target_view']
+                interp_x_min, interp_x_max, interp_y_min, interp_y_max = mapper.interpolate_zoom(anim)
+                mapper.set_current_view(interp_x_min, interp_x_max, interp_y_min, interp_y_max)   
 
 
-                elapsed_time = end_time - start_time
-                render_time_history.append(elapsed_time)
-                total_render_time += elapsed_time
+            if anim['step'] >= anim['total_steps']:
+                # Устанавливаем финальные параметры
+                mapper.set_current_view(target_vx_min, target_vx_max, target_vy_min, target_vy_max)
+                animation_queue.pop(0)
 
-                avg_frame_time = total_render_time / len(render_time_history)
-                remaining_frames = anim['total_steps'] - anim['step']
 
-                # Расчет общего времени в секундах и преобразование
-                total_seconds = avg_frame_time * remaining_frames
-                hours = int(total_seconds // 3600)
-                minutes = int((total_seconds % 3600) // 60)
-                seconds = int(total_seconds % 60)
-                estimated_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-                progress_percent = (anim['step'] / anim['total_steps']) * 100
-                frames_per_second = (1.0 / avg_frame_time)*60 if avg_frame_time > 0 else 0
-                viewing_degree_angle = math.degrees(interp_x_max-interp_x_min)
-                timestamp = frame_counter/30
+            start_time = time.time()
+            rgb_data = mapper.calc_and_get_rgb_data()
+            if  args.anim:
+                save_to_file(rgb_data)
+            
+                frame_counter += 1
+            else:
+                current_surface = create_surface_from_normalized_data(rgb_data)
+            end_time = time.time()
 
-                print(f"Done {(frame_counter-1):05d}/{anim['total_steps']}\t"
-                    f"{viewing_degree_angle}° @ TS {timestamp:.3f}s\t"
-                    f"rendered {elapsed_time:.3f}s @ "
-                    f"{frames_per_second:.2f}fpm\t"
-                    f"estimated {estimated_time_str} "
-                    f"({progress_percent:.1f}%)"
-                    )
+
+
+            elapsed_time = end_time - start_time
+            render_time_history.append(elapsed_time)
+            total_render_time += elapsed_time
+
+            avg_frame_time = total_render_time / len(render_time_history)
+            remaining_frames = anim['total_steps'] - anim['step']
+
+            # Расчет общего времени в секундах и преобразование
+            total_seconds = avg_frame_time * remaining_frames
+            hours = int(total_seconds // 3600)
+            minutes = int((total_seconds % 3600) // 60)
+            seconds = int(total_seconds % 60)
+            estimated_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+            progress_percent = (anim['step'] / anim['total_steps']) * 100
+            frames_per_second = (1.0 / avg_frame_time)*60 if avg_frame_time > 0 else 0
+            
+            
+            viewing_degree_angle = 0 # math.degrees(interp_x_max-interp_x_min)
+            
+            
+            timestamp = frame_counter/30
+
+            print(f"Done {(frame_counter-1):05d}/{anim['total_steps']}\t"
+                f"{viewing_degree_angle}° @ TS {timestamp:.3f}s\t"
+                f"rendered {elapsed_time:.3f}s @ "
+                f"{frames_per_second:.2f}fpm\t"
+                f"estimated {estimated_time_str} "
+                f"({progress_percent:.1f}%)"
+                )
+            
             rendered_frames +=1
 
-        elif(args.anim and frame_counter > 0):
+        elif args.anim and frame_counter > 0:
             # Если анимация завершена, выходим из цикла
             running = False
 
@@ -409,30 +366,10 @@ def main():
                 if event.type == pygame.QUIT:
                     running = False
                 if event.type == pygame.KEYDOWN:
-                    param_changed = mapper.update_params(event.key)
-                    if param_changed:
-                        print("Parameter changed, starting animation...")
-                        # Сохраняем текущие нормализованные данные для блендинга
-                        prev_normalized_data_for_anim = current_normalized_data.copy()
-                        
-                        # Новые параметры уже в pendulum объекте
-                        (x_min, x_max), (y_min, y_max) = mapper.params['current_view']
-                        new_raw_data = mapper.compute_map_raw()
-                        new_normalized_data = mapper.normalize_data(new_raw_data)
-                        
-                        animation_queue.append({
-                            'type': 'param_change',
-                            'prev_data_norm': prev_normalized_data_for_anim,
-                            'target_data_norm': new_normalized_data, # Это будут новые current_normalized_data
-                            'step': 0,
-                            'total_steps': ANIMATION_FRAMES
-                        })
-                        # current_normalized_data будет обновлен в конце этой анимации
-
 
                     if event.key == pygame.K_ESCAPE:
                         running = False
-                    if event.key == pygame.K_r:
+                    if event.key == pygame.K_p:
                         print("Resetting view, starting animation...")
                         # Целевые значения - это начальные диапазоны
                         (initial_x_min, initial_x_max), (initial_y_min, initial_y_max) = (x_min, x_max), (y_min, y_max)

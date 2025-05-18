@@ -21,10 +21,18 @@ class Mapper:
         self.width = width
         self.height = height
         self.params = params or {}
+        self.raw_data = None
+        self.normalized_data = None
+        
         
     @staticmethod
     
-    def interpolate(anim):
+
+    def interpolate_params(self, anim):
+        t = anim['step'] / anim['total_steps']
+
+
+    def interpolate_zoom(self, anim):
         t = anim['step'] / anim['total_steps']
         # Начальные и целевые границы
         start_vx_min, start_vx_max, start_vy_min, start_vy_max = anim['start_view']
@@ -102,9 +110,10 @@ class Mapper:
         raise NotImplementedError
 
     def normalize_data(self, raw_data):
+        self.raw_data = self.compute_map()
         """ Нормализует сырые данные (логарифм + min-max масштабирование в 0-255). """
         # Применяем натуральный логарифм (log1p для обработки нулей: log(1+x))
-        log_data = np.log1p(raw_data.astype(np.float64))
+        log_data = np.log1p(self.raw_data.astype(np.float64))
 
         min_log_val = np.min(log_data)
         max_log_val = np.max(log_data)
@@ -115,7 +124,9 @@ class Mapper:
             normalized_data = 255 * (log_data - min_log_val) / (max_log_val - min_log_val)
         
         normalized_data = np.clip(normalized_data, 0, 255).astype(np.uint8)
-        return normalized_data.reshape((self.height, self.width))
+        
+        self.normalized_data = normalized_data.reshape((self.height, self.width))
+        return self.normalized_data
 
     
     def save_state(self, filename, target_point=None):
@@ -148,6 +159,29 @@ class Mapper:
 
     def set_current_view(self, x_min, x_max, y_min, y_max):
         self.params['current_view'] = (x_min, x_max, y_min, y_max)
+
+
+    def calc_and_get_rgb_data(self):
+        self.compute_map()
+        self.normalize_data(self.raw_data)
+        """Генерирует RGB данные из нормализованных 2D данных с предобработкой"""
+        img_data = self.normalized_data.copy()
+        
+        # Применяем медианный фильтр 3x3 для сглаживания
+        img_data = median_filter(img_data, size=3)
+        
+        # Нормализуем и конвертируем в uint8
+        if img_data.max() <= 1.0:
+            img_data = (img_data * 255).astype(np.uint8)
+        else:
+            img_data = img_data.astype(np.uint8)
+        
+        # Создаем 3-канальное изображение
+        height, width = img_data.shape
+        rgb_data = np.zeros((height, width, 3), dtype=np.uint8)
+        rgb_data[:, :, :] = img_data[..., np.newaxis]  # Копируем данные во все 3 канала
+        
+        return rgb_data
 
 
 
