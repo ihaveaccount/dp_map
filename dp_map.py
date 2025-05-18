@@ -204,21 +204,23 @@ def main():
 
 
     params = {
-        'L1': 1.0, 'L2': 1.0, 'M1': 1.0, 'M2': 1.0,
-        'G': 9.81, 'DT': 0.2, 'MAX_ITER': 5000,
-        'current_view': (x_min, x_max, y_min, y_max)
+    'L1': args.l1,
+    'L2': args.l2,
+    'M1': args.m1,
+    'M2': args.m2,
+    'G': args.g,
+    'DT': args.dt,
+    'MAX_ITER': args.iter,
+    'current_view': (x_min, x_max, y_min, y_max)  # Добавляем начальный вид
     }
-    
-
-    print (params)
 
     mapper = DPMapper(
         width=WIDTH,
         height=HEIGHT,
         kernel_file=args.kernel,
-        params=params
+        params=params.copy()  # Гарантируем копию, а не ссылку
     )
-    
+    target_vx_min, target_vx_max, target_vy_min, target_vy_max = x_min, x_max, y_min, y_max
     # mapper.set_current_view(x_min, x_max, y_min, y_max)
     
     # Use the backend selection function to create the appropriate mapper
@@ -284,12 +286,7 @@ def main():
                 'step': args.start,
                 'total_steps': args.frames
             })
-        # animation_queue.append({
-        #                     'type': 'zoom',
-        #                     'start_view': (x_min, x_max, y_min, y_max),
-        #                     'target_view': target_point,
-        #                     'step': frame_counter, 
-        #                     'total_steps': args.frames})
+
         
 
     total_time = time.time()
@@ -398,64 +395,101 @@ def main():
                     running = False
                 if event.type == pygame.KEYDOWN:
 
-                    if event.key == pygame.K_ESCAPE:
-                        running = False
-                    if event.key == pygame.K_p:
-                        print("Resetting view, starting animation...")
-                        # Целевые значения - это начальные диапазоны
-                        (initial_x_min, initial_x_max), (initial_y_min, initial_y_max) = (x_min, x_max), (y_min, y_max)
-                        
-                        # Текущие значения для интерполяции
-                        (current_x_min, current_x_max), (current_y_min, current_y_max) = mapper.params['current_view']
 
-                        animation_queue.append({
-                            'type': 'zoom',
-                            'start_view': (current_x_min, current_x_max, current_y_min, current_y_max),
-                            'target_view': (initial_x_min, initial_x_max, initial_y_min, initial_y_max),
-                            'step': 0,
-                            'total_steps': ANIMATION_FRAMES_OUT
-                        })
-                        # mapper.reset_view_ranges() будет вызван в конце этой анимации
+                    step = 0.1
+                    iter_step = 100
+                    # Получаем текущие параметры из маппера
+                    params = mapper.params
+                    
+                    # Длины
+                    if event.key == pygame.K_UP:
+                        params['L1'] += step
+                    elif event.key == pygame.K_DOWN:
+                        params['L1'] -= step
+                    elif event.key == pygame.K_RIGHT:
+                        params['L2'] += step
+                    elif event.key == pygame.K_LEFT:
+                        params['L2'] -= step
+                        
+                    # Массы
+                    elif event.key == pygame.K_w:
+                        params['M1'] += step
+                    elif event.key == pygame.K_s:
+                        params['M1'] -= step
+                    elif event.key == pygame.K_d:
+                        params['M2'] += step
+                    elif event.key == pygame.K_a:
+                        params['M2'] -= step
+                        
+                    # Гравитация
+                    elif event.key == pygame.K_q:
+                        params['G'] += step
+                    elif event.key == pygame.K_e:
+                        params['G'] -= step
+                        
+                    # Шаг времени
+                    elif event.key == pygame.K_z:
+                        params['DT'] = round(params['DT'] - 0.01, 2)
+                    elif event.key == pygame.K_x:
+                        params['DT'] = round(params['DT'] + 0.01, 2)
+                        
+                    # Итерации
+                    elif event.key == pygame.K_c:
+                        params['MAX_ITER'] += iter_step
+                    elif event.key == pygame.K_v:
+                        params['MAX_ITER'] = max(100, params['MAX_ITER'] - iter_step)
+                    
+                    # Обновляем и перерисовываем
+                    if event.key in [pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT,
+                                    pygame.K_w, pygame.K_s, pygame.K_a, pygame.K_d,
+                                    pygame.K_q, pygame.K_e, pygame.K_z, pygame.K_x,
+                                    pygame.K_c, pygame.K_v]:
+                        rgb_data = mapper.calc_and_get_rgb_data()
+                        current_surface = create_surface_from_normalized_data(rgb_data)
+
+                        if args.pfile != "":
+                            
+                            mapper.save_state(args.pfile)
+                            
+                        
+
+                
+                        print(f"Params updated: {params}")
+
+ 
 
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button == 1: # Левая кнопка мыши
-                        if not animation_queue: # Не начинать новый зум во время анимации
-                            mx, my = event.pos # Координаты мыши в пикселях окна
+                        
+                        mx, my = event.pos # Координаты мыши в пикселях окна
+                        
+                    
+                        current_x_min, current_x_max, current_y_min, current_y_max = mapper.params['current_view']
+                        
+                        # Преобразование пиксельных координат в координаты данных
+                        data_x = current_x_min + (mx / WIDTH) * (current_x_max - current_x_min)
+                        data_y = current_y_min + (my / HEIGHT) * (current_y_max - current_y_min)
+
+                        
+                        new_span_x = (current_x_max - current_x_min) * ZOOM_FACTOR
+                        new_span_y = (current_y_max - current_y_min) * ZOOM_FACTOR
+
+                        
+                        target_x_min = data_x -  new_span_x
+                        target_x_max = data_x +  new_span_x
+                        target_y_min = data_y - new_span_y
+                        target_y_max = data_y +  new_span_y
+
+                        mapper.set_current_view(target_x_min, target_x_max, target_y_min, target_y_max)
+                        rgb_data = mapper.calc_and_get_rgb_data()
+                        current_surface = create_surface_from_normalized_data(rgb_data)       
+                        
+                        if args.pfile != "":
                             
-                          
-                            current_x_min, current_x_max, current_y_min, current_y_max = mapper.params['current_view']
-                            
-                            # Преобразование пиксельных координат в координаты данных
-                            data_x = current_x_min + (mx / WIDTH) * (current_x_max - current_x_min)
-                            data_y = current_y_min + (my / HEIGHT) * (current_y_max - current_y_min)
+                            mapper.save_state(args.pfile)
 
-                            
-                            new_span_x = (current_x_max - current_x_min) * ZOOM_FACTOR
-                            new_span_y = (current_y_max - current_y_min) * ZOOM_FACTOR
-
-                            
-                            target_x_min = data_x -  new_span_x
-                            target_x_max = data_x +  new_span_x
-                            target_y_min = data_y - new_span_y
-                            target_y_max = data_y +  new_span_y
-
-                            mapper.set_current_view(target_x_min, target_x_max, target_y_min, target_y_max)
-                                                    
-                            if args.pfile != "":
-                                # Записываем координаты точки и параметры маятника в файл
-                                mapper.save_state(args.pfile, target_view=(target_x_min, target_x_max, target_y_min, target_y_max))
-                                                    
-                                print(f"Целевая точка и параметры маятника записаны в файл: {args.pfile}")
-
-
-                            print("Zooming, starting animation...")
-                            animation_queue.append({
-                                'type': 'zoom',
-                                'start_view': (current_x_min, current_x_max, current_y_min, current_y_max),
-                                'target_view': (target_x_min, target_x_max, target_y_min, target_y_max),
-                                'step': 0,
-                                'total_steps': ANIMATION_FRAMES
-                            })
+                        print("Zooming, starting animation...")
+                        
 
 
 

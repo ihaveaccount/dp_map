@@ -1,4 +1,3 @@
-
 import numpy as np
 import pyopencl as cl
 import os
@@ -130,8 +129,11 @@ class Mapper:
 
     
     def save_state(self, filename, target_view=None):
+        # Если target_view не передан, используем текущий view
+        if target_view is None:
+            target_view = list(self.get_current_view())
         state = {
-            "params": self.params.copy(),
+            "params": self.params.copy(),  # Сохраняем все текущие параметры
             "target_view": target_view
         }
         with open(filename, 'w') as f:
@@ -142,14 +144,14 @@ class Mapper:
         with open(filename) as f:
             state = json.load(f)
         
-        target_view = state.get("target_view")
-        params = state.get("params", {})
-        
+        # Для существующего маппера: обновляем параметры
         if existing_mapper:
-            existing_mapper.params.update(params)
-            return existing_mapper, target_view
+            existing_mapper.params.update(state.get("params", {}))
+            return existing_mapper, state.get("target_view")
         
-        return cls(1, 1, params), target_view    
+        # Для нового маппера: создаем с загруженными параметрами
+        return cls(1, 1, state.get("params", {})), state.get("target_view")
+ 
 
     def get_current_view(self):
         return self.params["current_view"]
