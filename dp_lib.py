@@ -3,159 +3,108 @@ import numpy as np
 import pyopencl as cl
 import os
 import math
-import Metal as metal
 import pathlib
 import re
 from PIL import Image
 import ctypes
 from scipy.ndimage import median_filter
 
-# --- Интерфейс IMappable и его реализация ---
-class IMappable:
-    def get_initial_ranges(self):
-        """Возвращает начальные диапазоны для X и Y."""
-        raise NotImplementedError
-
-    def get_kernel_params(self):
-        """Возвращает параметры, специфичные для функции, для передачи в OpenCL ядро."""
-        raise NotImplementedError
-
-    def update_params(self, key):
-        """Обновляет параметры на основе нажатой клавиши."""
-        raise NotImplementedError
-
-    def print_params(self):
-        """Выводит текущие параметры в консоль."""
-        raise NotImplementedError
-    
-    def get_param_string(self):
-        """Возвращает строку с текущими параметрами."""
-        raise NotImplementedError
+import json
 
 
 
 
-class DoublePendulum(IMappable):
-    def __init__(self, L1=1.0, L2=1.0, M1=1.0, M2=1.0, G=9.81, DT=0.2, MAX_ITER=5000, theta1_min=-np.pi, theta1_max=np.pi, theta2_min=-np.pi, theta2_max=np.pi):
-        self.L1_initial, self.L2_initial, self.M1_initial, self.M2_initial = L1, L2, M1, M2
-        self.L1, self.L2, self.M1, self.M2 = L1, L2, M1, M2
-        self.G = G
-        self.DT = DT
-        self.MAX_ITER = MAX_ITER
-
-        self.theta1_min_initial, self.theta1_max_initial = theta1_min, theta1_max
-        self.theta2_min_initial, self.theta2_max_initial = theta2_min, theta2_max
-        
-        self.current_view_x_min, self.current_view_x_max = self.theta1_min_initial, self.theta1_max_initial
-        self.current_view_y_min, self.current_view_y_max = self.theta2_min_initial, self.theta2_max_initial
-
-        self.print_params()
-
-    def get_initial_ranges(self):
-        return (self.theta1_min_initial, self.theta1_max_initial), \
-               (self.theta2_min_initial, self.theta2_max_initial)
-
-    def get_current_view_ranges(self):
-         return (self.current_view_x_min, self.current_view_x_max), \
-                (self.current_view_y_min, self.current_view_y_max)
-
-    def set_current_view_ranges(self, x_min, x_max, y_min, y_max):
-        self.current_view_x_min, self.current_view_x_max = x_min, x_max
-        self.current_view_y_min, self.current_view_y_max = y_min, y_max
-
-    def reset_view_ranges(self):
-        self.current_view_x_min, self.current_view_x_max = self.theta1_min_initial, self.theta1_max_initial
-        self.current_view_y_min, self.current_view_y_max = self.theta2_min_initial, self.theta2_max_initial
-        print("View reset to initial ranges.")
-        self.print_params()
 
 
-    def get_kernel_params(self):
-        return np.double(self.L1), np.double(self.L2), \
-               np.double(self.M1), np.double(self.M2), \
-               np.double(self.G), np.double(self.DT), \
-               np.int32(self.MAX_ITER)
-
-    def update_params(self, key):
-        changed = False
-        param_step_L = 0.1
-        param_step_M = 0.1
-
-        
-        if changed:
-            self.print_params()
-        return changed
-
-    def print_params(self):
-        print(self.get_param_string())
-
-    def get_param_string(self):
-        return (f"L1(Q/W): {self.L1:.2f}, L2(A/S): {self.L2:.2f}, "
-                f"M1(Z/X): {self.M1:.2f}, M2(C/V): {self.M2:.2f}\n"
-                f"View : {self.current_view_x_min}, {self.current_view_x_max}, {self.current_view_y_min}, {self.current_view_y_max} (R to reset view)")
-
-
-class MapperOpenCL:
-    """Класс для вычисления карты двойного маятника с использованием OpenCL."""
-
-    def __init__(self, width, height, mappable_function):
+class Mapper:
+    def __init__(self, width, height, params=None):
         self.width = width
         self.height = height
-        self.mappable = mappable_function
-
-        # --- OpenCL Setup ---
-        self.ctx = cl.create_some_context()
-        self.queue = cl.CommandQueue(self.ctx)
+        self.params = params or {}
         
-        kernel_path = os.path.join(os.path.dirname(__file__), "pendulum_kernel.c")
-        with open(kernel_path, "r") as f:
-            kernel_code = f.read()
-        self.prg = cl.Program(self.ctx, kernel_code).build()
-
-        # --- Buffers ---
-        self.num_points = self.width * self.height
-        # Выходной буфер для результатов с GPU
-        self.raw_results_np = np.empty(self.num_points, dtype=np.int32)
-        self.mf = cl.mem_flags
-        self.output_buf = cl.Buffer(self.ctx, self.mf.WRITE_ONLY, self.raw_results_np.nbytes)
+    @staticmethod
+    
+    def interpolate(anim):
+        t = anim['step'] / anim['total_steps']
+        # Начальные и целевые границы
+        start_vx_min, start_vx_max, start_vy_min, start_vy_max = anim['start_view']
+        target_vx_min, target_vx_max, target_vy_min, target_vy_max = anim['target_view']
+        phase_cutoff = 0.05  # 5% времени на центрирование
         
-        # Входные буферы (будут создаваться при каждом вызове, т.к. их содержимое меняется)
-        self.input_theta1_np = np.empty(self.num_points, dtype=np.double)
-        self.input_theta2_np = np.empty(self.num_points, dtype=np.double)
 
-    def compute_map_raw(self, x_min, x_max, y_min, y_max):
-        """ Вычисляет сырые данные карты (количество циклов) """
-        theta1_vals = np.linspace(x_min, x_max, self.width, dtype=np.double)
-        theta2_vals = np.linspace(y_min, y_max, self.height, dtype=np.double)
+        # Исходные параметры
+        start_scale_x = start_vx_max - start_vx_min
+        target_scale_x = target_vx_max - target_vx_min
+        start_scale_y = start_vy_max - start_vy_min
+        target_scale_y = target_vy_max - target_vy_min
 
-        # Заполнение входных массивов: каждому пикселю своя пара (theta1, theta2)
-        # Пиксель (col, row) -> (theta1_vals[col], theta2_vals[row])
-        # Индекс в 1D массиве: idx = row * self.width + col
-        for r_idx in range(self.height):
-            for c_idx in range(self.width):
-                idx = r_idx * self.width + c_idx
-                self.input_theta1_np[idx] = theta1_vals[c_idx]
-                self.input_theta2_np[idx] = theta2_vals[r_idx]
-        
-        # Создание и копирование входных буферов на GPU
-        input_theta1_buf = cl.Buffer(self.ctx, self.mf.READ_ONLY | self.mf.COPY_HOST_PTR, hostbuf=self.input_theta1_np)
-        input_theta2_buf = cl.Buffer(self.ctx, self.mf.READ_ONLY | self.mf.COPY_HOST_PTR, hostbuf=self.input_theta2_np)
+        start_center = ((start_vx_min + start_vx_max)/2, 
+                    (start_vy_min + start_vy_max)/2)
+        target_center = ((target_vx_min + target_vx_max)/2, 
+                        (target_vy_min + target_vy_max)/2)
 
-        kernel_args = (
-            input_theta1_buf, input_theta2_buf, self.output_buf,
-            *self.mappable.get_kernel_params(), # L1, L2, M1, M2, G, DT, MAX_ITER
-            np.int32(self.num_points)
-        )
-        
-        self.prg.simulate_pendulum(self.queue, (self.num_points,), None, *kernel_args).wait()
-        cl.enqueue_copy(self.queue, self.raw_results_np, self.output_buf).wait()
-        
-        return self.raw_results_np.copy() # Возвращаем копию, чтобы избежать проблем с изменением
+        # Рассчитываем целевой масштаб для фазы 1 (уменьшение в 2 раза)
+        phase1_target_scale_x = start_scale_x / 2
+        phase1_target_scale_y = start_scale_y / 2
 
-    def normalize_data_old(self, raw_data):
+        if t <= phase_cutoff:
+            # Фаза 1: Панорамирование + уменьшение масштаба
+            t_phase = t / phase_cutoff
+            t_eased = 0.5 * (1 - math.cos(t_phase * math.pi))  # Плавное ускорение
+            
+            # Интерполяция центра
+            current_center_x = start_center[0] + (target_center[0] - start_center[0]) * t_eased
+            current_center_y = start_center[1] + (target_center[1] - start_center[1]) * t_eased
+            
+            # Интерполяция масштаба до уменьшенного в 2 раза
+            current_scale_x = start_scale_x - (start_scale_x - phase1_target_scale_x) * t_eased
+            current_scale_y = start_scale_y - (start_scale_y - phase1_target_scale_y) * t_eased
+            
+        else:
+            # Фаза 2: Экспоненциальное увеличение
+            t_phase = (t - phase_cutoff) / (1 - phase_cutoff)
+            
+            # Начальный масштаб - результат фазы 1
+            start_scale_phase2_x = phase1_target_scale_x
+            start_scale_phase2_y = phase1_target_scale_y
+            
+            # Экспоненциальная интерполяция
+            current_scale_x = start_scale_phase2_x * (target_scale_x / start_scale_phase2_x) ** t_phase
+            current_scale_y = start_scale_phase2_y * (target_scale_y / start_scale_phase2_y) ** t_phase
+            
+            # Центр фиксируется на целевом
+            current_center_x = target_center[0]
+            current_center_y = target_center[1]
+
+        # Рассчет границ области
+        interp_x_min = current_center_x - current_scale_x / 2
+        interp_x_max = current_center_x + current_scale_x / 2
+        interp_y_min = current_center_y - current_scale_y / 2
+        interp_y_max = current_center_y + current_scale_y / 2
+
+        # Гарантия, что целевая область остается в кадре
+        interp_x_min = max(interp_x_min, target_vx_min)
+        interp_x_max = min(interp_x_max, target_vx_max)
+        interp_y_min = max(interp_y_min, target_vy_min)
+        interp_y_max = min(interp_y_max, target_vy_max)
+
+    
+        # Рассчитываем границы
+        interp_x_min = current_center_x - current_scale_x / 2
+        interp_x_max = current_center_x + current_scale_x / 2
+        interp_y_min = current_center_y - current_scale_y / 2
+        interp_y_max = current_center_y + current_scale_y / 2
+
+
+        return interp_x_min, interp_x_max, interp_y_min, interp_y_max
+
+    def compute_map(self, x_min, x_max, y_min, y_max):
+        raise NotImplementedError
+
+    def normalize_data(self, raw_data):
         """ Нормализует сырые данные (логарифм + min-max масштабирование в 0-255). """
         # Применяем натуральный логарифм (log1p для обработки нулей: log(1+x))
-        log_data = np.log1p(raw_data.astype(np.double))
+        log_data = np.log1p(raw_data.astype(np.float64))
 
         min_log_val = np.min(log_data)
         max_log_val = np.max(log_data)
@@ -168,311 +117,96 @@ class MapperOpenCL:
         normalized_data = np.clip(normalized_data, 0, 255).astype(np.uint8)
         return normalized_data.reshape((self.height, self.width))
 
-    def normalize_data(self, raw_data):
-        log_data = np.log1p(raw_data.astype(np.float64))
-       #log_data = np.sqrt(raw_data.astype(np.double))
-        # Используем 1-й и 99-й перцентили для отсечения выбросов
-        min_val = np.percentile(log_data, 1)
-        max_val = np.percentile(log_data, 95)
-        if max_val <= min_val:
-            return np.zeros_like(log_data, dtype=np.uint8)
-        normalized = 255 * (log_data - min_val) / (max_val - min_val)
-        normalized = np.clip(normalized, 0, 255).astype(np.uint8)
-        return normalized.reshape((self.height, self.width))
-
-
- 
- 
-
-class MapperMetal:
-    def __init__(self, width, height, mappable_function):
-        self.width = width
-        self.height = height
-        self.mappable = mappable_function
-        self.num_points = width * height
-        
-        # Metal setup
-        self.device = metal.MTLCreateSystemDefaultDevice()
-        self.library = self._load_shader_library()
-        self.command_queue = self.device.newCommandQueue()
-        
-        # Buffers
-        self.input_theta1 = None
-        self.input_theta2 = None
-        self.output_buffer = None
-        
-    def _load_shader_library(self):
-        kernel_path = os.path.join(os.path.dirname(__file__), "pendulum_kernel.metal")
-        with open(kernel_path, "r") as f:
-            source = f.read()
-        return self.device.newLibraryWithSource_options_error_(source, None, None)[0]
     
-    def compute_map_raw(self, x_min, x_max, y_min, y_max):
-        # Prepare input data
-        theta1_vals = np.linspace(x_min, x_max, self.width, dtype=np.float32)
-        theta2_vals = np.linspace(y_min, y_max, self.height, dtype=np.float32)
-        
-        input_theta1 = np.empty(self.num_points, dtype=np.float32)
-        input_theta2 = np.empty(self.num_points, dtype=np.float32)
-        
-        for r in range(self.height):
-            for c in range(self.width):
-                idx = r * self.width + c
-                input_theta1[idx] = theta1_vals[c]
-                input_theta2[idx] = theta2_vals[r]
-        
-        # Create buffers
-        self.input_theta1 = self.device.newBufferWithBytes_length_options_(
-            input_theta1.tobytes(), input_theta1.nbytes, metal.MTLResourceStorageModeShared
-        )
-        self.input_theta2 = self.device.newBufferWithBytes_length_options_(
-            input_theta2.tobytes(), input_theta2.nbytes, metal.MTLResourceStorageModeShared
-        )
-        self.output_buffer = self.device.newBufferWithLength_options_(
-            self.num_points * 4, metal.MTLResourceStorageModeShared
-        )
-        
-        # Get kernel parameters
-        L1, L2, M1, M2, G, DT, MAX_ITER = self.mappable.get_kernel_params()
-        params = np.array([L1, L2, M1, M2, G, DT, MAX_ITER], dtype=np.float32)
-        
-        # Configure pipeline
-        compute_function = self.library.newFunctionWithName_("simulate_pendulum")
-        pipeline_state = self.device.newComputePipelineStateWithFunction_error_(compute_function, None)[0]
-        
-        # Encode command
-        command_buffer = self.command_queue.commandBuffer()
-        compute_encoder = command_buffer.computeCommandEncoder()
-        
-        compute_encoder.setComputePipelineState_(pipeline_state)
-        compute_encoder.setBuffer_offset_atIndex_(self.input_theta1, 0, 0)
-        compute_encoder.setBuffer_offset_atIndex_(self.input_theta2, 0, 1)
-        compute_encoder.setBuffer_offset_atIndex_(self.output_buffer, 0, 2)
-        
-        for i, val in enumerate(params):
-            compute_encoder.setBytes_length_atIndex_(val.tobytes(), val.nbytes, 3 + i)
-        
-        grid_size = metal.MTLSizeMake(self.num_points, 1, 1)
-        thread_group_size = metal.MTLSizeMake(pipeline_state.maxTotalThreadsPerThreadgroup(), 1, 1)
-        
-        compute_encoder.dispatchThreads_threadsPerThreadgroup_(grid_size, thread_group_size)
-        compute_encoder.endEncoding()
-        command_buffer.commit()
-        command_buffer.waitUntilCompleted()
-        
-        # Получаем указатель на данные и преобразуем в ctypes
-        result_ptr = self.output_buffer.contents()
-        buffer_length = self.output_buffer.length()
-        
-        # Создаем ctypes указатель на буфер
-        char_array = ctypes.cast(
-            result_ptr, 
-            ctypes.POINTER(ctypes.c_char * buffer_length)
-        )
-        
-        # Преобразуем в bytes и затем в numpy массив
-        byte_data = bytes(char_array.contents)
-        result_np = np.frombuffer(byte_data, dtype=np.int32, count=self.num_points)
-        
-        return result_np.copy()
-    
-    def normalize_data(self, raw_data):
-        # Same normalization as OpenCL version
-        log_data = np.log1p(raw_data.astype(np.float64))
-        min_val = np.min(log_data)
-        max_val = np.max(log_data)
-        if max_val == min_val:
-            return np.zeros_like(log_data, dtype=np.uint8)
-        normalized = 255 * (log_data - min_val) / (max_val - min_val)
-        return np.clip(normalized, 0, 255).astype(np.uint8).reshape((self.height, self.width))
-
-
-
-
-def create_mapper(width, height, pendulum, backend):
-    """Creates the appropriate mapper based on the selected backend."""
-    if backend == 'opencl':
-        return MapperOpenCL(width, height, pendulum)
-    elif backend == 'metal':
-        # raise NotImplementedError("Metal backend is not implemented yet.")
-        return MapperMetal(width, height, pendulum)
-    else:
-        raise ValueError(f"Unsupported backend: {backend}")
-
-
-
-def interpolate(anim):
-
-    t = anim['step'] / anim['total_steps']
-    # Начальные и целевые границы
-    start_vx_min, start_vx_max, start_vy_min, start_vy_max = anim['start_view']
-    target_vx_min, target_vx_max, target_vy_min, target_vy_max = anim['target_view']
-    phase_cutoff = 0.05  # 5% времени на центрирование
-    
-
-    # Исходные параметры
-    start_scale_x = start_vx_max - start_vx_min
-    target_scale_x = target_vx_max - target_vx_min
-    start_scale_y = start_vy_max - start_vy_min
-    target_scale_y = target_vy_max - target_vy_min
-
-    start_center = ((start_vx_min + start_vx_max)/2, 
-                (start_vy_min + start_vy_max)/2)
-    target_center = ((target_vx_min + target_vx_max)/2, 
-                    (target_vy_min + target_vy_max)/2)
-
-    # Рассчитываем целевой масштаб для фазы 1 (уменьшение в 2 раза)
-    phase1_target_scale_x = start_scale_x / 2
-    phase1_target_scale_y = start_scale_y / 2
-
-    if t <= phase_cutoff:
-        # Фаза 1: Панорамирование + уменьшение масштаба
-        t_phase = t / phase_cutoff
-        t_eased = 0.5 * (1 - math.cos(t_phase * math.pi))  # Плавное ускорение
-        
-        # Интерполяция центра
-        current_center_x = start_center[0] + (target_center[0] - start_center[0]) * t_eased
-        current_center_y = start_center[1] + (target_center[1] - start_center[1]) * t_eased
-        
-        # Интерполяция масштаба до уменьшенного в 2 раза
-        current_scale_x = start_scale_x - (start_scale_x - phase1_target_scale_x) * t_eased
-        current_scale_y = start_scale_y - (start_scale_y - phase1_target_scale_y) * t_eased
-        
-    else:
-        # Фаза 2: Экспоненциальное увеличение
-        t_phase = (t - phase_cutoff) / (1 - phase_cutoff)
-        
-        # Начальный масштаб - результат фазы 1
-        start_scale_phase2_x = phase1_target_scale_x
-        start_scale_phase2_y = phase1_target_scale_y
-        
-        # Экспоненциальная интерполяция
-        current_scale_x = start_scale_phase2_x * (target_scale_x / start_scale_phase2_x) ** t_phase
-        current_scale_y = start_scale_phase2_y * (target_scale_y / start_scale_phase2_y) ** t_phase
-        
-        # Центр фиксируется на целевом
-        current_center_x = target_center[0]
-        current_center_y = target_center[1]
-
-    # Рассчет границ области
-    interp_x_min = current_center_x - current_scale_x / 2
-    interp_x_max = current_center_x + current_scale_x / 2
-    interp_y_min = current_center_y - current_scale_y / 2
-    interp_y_max = current_center_y + current_scale_y / 2
-
-    # Гарантия, что целевая область остается в кадре
-    interp_x_min = max(interp_x_min, target_vx_min)
-    interp_x_max = min(interp_x_max, target_vx_max)
-    interp_y_min = max(interp_y_min, target_vy_min)
-    interp_y_max = min(interp_y_max, target_vy_max)
-
- 
-    # Рассчитываем границы
-    interp_x_min = current_center_x - current_scale_x / 2
-    interp_x_max = current_center_x + current_scale_x / 2
-    interp_y_min = current_center_y - current_scale_y / 2
-    interp_y_max = current_center_y + current_scale_y / 2
-
-
-    return interp_x_min, interp_x_max, interp_y_min, interp_y_max
-
-
-
-import json
-
-
-
-
-def write_target_point_to_file(filename, view_coords, pendulum=None):
-    """
-    Записывает координаты точки и параметры маятника в JSON файл.
-    
-    Args:
-        filename (str): Имя файла для сохранения
-        view_coords (tuple): (theta1_min, theta1_max, theta2_min, theta2_max)
-        pendulum: Экземпляр DoublePendulum (опционально)
-    """
-    try:
-        # Создаем базовый словарь с координатами вида
-        theta1_min, theta1_max, theta2_min, theta2_max = view_coords
-        data = {
-            "view_ranges": {
-                "theta1_min": theta1_min,
-                "theta1_max": theta1_max,
-                "theta2_min": theta2_min, 
-                "theta2_max": theta2_max
-            }
+    def save_state(self, filename, target_point=None):
+        state = {
+            "params": self.params,
+            "target_point": target_point
         }
+        with open(filename, 'w') as f:
+            json.dump(state, f, indent=2)
+
+    @classmethod
+    def load_state(cls, filename, existing_mapper=None):
+        """Загружает состояние в существующий экземпляр Mapper"""
+        with open(filename) as f:
+            state = json.load(f)
         
-        # Если передан маятник, добавляем его параметры
-        if pendulum:
-            data["pendulum_params"] = {
-                "L1": pendulum.L1,
-                "L2": pendulum.L2,
-                "M1": pendulum.M1,
-                "M2": pendulum.M2,
-                "G": pendulum.G,
-                "DT": pendulum.DT,
-                "MAX_ITER": pendulum.MAX_ITER
-            }
+        # Если передан существующий маппер - обновляем его параметры
+        if existing_mapper:
+            existing_mapper.params.update(state.get("params", {}))
+            return existing_mapper, state.get("target_point")
         
-        # Записываем в файл в формате JSON
-        with open(filename, 'w', encoding='utf-8') as file:
-            json.dump(data, file, ensure_ascii=False, indent=4)
-            
-        print(f"Параметры успешно сохранены в '{filename}'")
-    except Exception as e:  
-        print(f"Ошибка при записи параметров в файл: {e}")
+        # Для обратной совместимости (лучше всегда использовать existing_mapper)
+        dummy_mapper = cls(1, 1, state.get("params"))
+        return dummy_mapper, state.get("target_point")
+    
+
+    def get_current_view(self):
+        return self.params["current_view"]
 
 
-def read_target_point_from_file(filename, pendulum=None):
-    """
-    Читает координаты точки и параметры маятника из JSON файла.
-    
-    Args:
-        filename (str): Имя файла для чтения
-        pendulum: Экземпляр DoublePendulum (опционально) для установки параметров
-    
-    Returns:
-        tuple: (theta1_min, theta1_max, theta2_min, theta2_max) или None в случае ошибки
-    """
-    try:
-        with open(filename, 'r', encoding='utf-8') as file:
-            data = json.load(file)
+    def set_current_view(self, x_min, x_max, y_min, y_max):
+        self.params['current_view'] = (x_min, x_max, y_min, y_max)
+
+
+
+
+
+class DPMapper(Mapper):
+    def __init__(self, width, height, kernel_file, params=None):
+        super().__init__(width, height, params)
+        self.ctx = cl.create_some_context()
+        self.queue = cl.CommandQueue(self.ctx)
         
-        # Если переданы параметры маятника и экземпляр маятника
-        if "pendulum_params" in data and pendulum:
-            params = data["pendulum_params"]
-            pendulum.L1 = params.get("L1", pendulum.L1)
-            pendulum.L2 = params.get("L2", pendulum.L2)
-            pendulum.M1 = params.get("M1", pendulum.M1)
-            pendulum.M2 = params.get("M2", pendulum.M2)
-            pendulum.G = params.get("G", pendulum.G)
-            pendulum.DT = params.get("DT", pendulum.DT)
-            pendulum.MAX_ITER = params.get("MAX_ITER", pendulum.MAX_ITER)
-            print("Параметры маятника установлены из файла")
+        with open(kernel_file, "r") as f:
+            kernel_code = f.read()
+        self.prg = cl.Program(self.ctx, kernel_code).build()
         
-        # Получаем координаты
-        view_ranges = data.get("view_ranges", {})
-        if view_ranges:
-            theta1_min = view_ranges.get("theta1_min")
-            theta1_max = view_ranges.get("theta1_max")
-            theta2_min = view_ranges.get("theta2_min")
-            theta2_max = view_ranges.get("theta2_max")
-            
-            if all(x is not None for x in [theta1_min, theta1_max, theta2_min, theta2_max]):
-                return (theta1_min, theta1_max, theta2_min, theta2_max)
+        self.num_points = width * height
+        self.raw_results_np = np.empty(self.num_points, dtype=np.int32)
+        self.mf = cl.mem_flags
+        self.output_buf = cl.Buffer(self.ctx, self.mf.WRITE_ONLY, self.raw_results_np.nbytes)
+        self.input_theta1_np = np.empty(self.num_points, dtype=np.double)
+        self.input_theta2_np = np.empty(self.num_points, dtype=np.double)
+        self.params = params or {}
+
+    def get_kernel_params(self):
+        return (
+            np.double(self.params.get('L1', 1.0)),
+            np.double(self.params.get('L2', 1.0)),
+            np.double(self.params.get('M1', 1.0)),
+            np.double(self.params.get('M2', 1.0)),
+            np.double(self.params.get('G', 9.81)),
+            np.double(self.params.get('DT', 0.2)),
+            np.int32(self.params.get('MAX_ITER', 5000))
+        )
+
+    def compute_map(self):
+        x_min, x_max, y_min, y_max = self.params['current_view']
+        theta1_vals = np.linspace(x_min, x_max, self.width, dtype=np.double)
+        theta2_vals = np.linspace(y_min, y_max, self.height, dtype=np.double)
+
+        for r_idx in range(self.height):
+            for c_idx in range(self.width):
+                idx = r_idx * self.width + c_idx
+                self.input_theta1_np[idx] = theta1_vals[c_idx]
+                self.input_theta2_np[idx] = theta2_vals[r_idx]
+
+        input_theta1_buf = cl.Buffer(self.ctx, self.mf.READ_ONLY | self.mf.COPY_HOST_PTR, hostbuf=self.input_theta1_np)
+        input_theta2_buf = cl.Buffer(self.ctx, self.mf.READ_ONLY | self.mf.COPY_HOST_PTR, hostbuf=self.input_theta2_np)
+
+        kernel_args = (
+            input_theta1_buf, input_theta2_buf, self.output_buf,
+            *self.get_kernel_params(),
+            np.int32(self.num_points)
+        )
         
-        # Если формат файла старый (просто список координат)
-        if isinstance(data, list) and len(data) == 4:
-            print("Обнаружен старый формат файла")
-            return tuple(data)
-        
-        print("Координаты не найдены в файле")
-        return None
-    except Exception as e:
-        print(f"Ошибка при чтении параметров из файла: {e}")
-        return None
-    
+        self.prg.simulate_pendulum(self.queue, (self.num_points,), None, *kernel_args).wait()
+        cl.enqueue_copy(self.queue, self.raw_results_np, self.output_buf).wait()
+        return self.raw_results_np.copy()
+
+
+
 
 

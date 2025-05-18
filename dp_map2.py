@@ -105,15 +105,6 @@ def save_to_file(normalized_2d_data):
     filename = os.path.join(frames_dir, f"frame_{frame_counter:05d}.png")
     img.save(filename)
 
-def create_surface_from_normalized_data(normalized_2d_data):
-
-    image_data_rgb = np.empty((HEIGHT, WIDTH, 3), dtype=np.uint8)
-    """ Создает Pygame Surface из 2D нормализованных данных (яркость). """
-    image_data_rgb[:, :, 0] = normalized_2d_data
-    image_data_rgb[:, :, 1] = normalized_2d_data
-    image_data_rgb[:, :, 2] = normalized_2d_data
-    # Pygame ожидает (width, height, channels)
-    return pygame.surfarray.make_surface(image_data_rgb.transpose(1,0,2))
 
 
 
