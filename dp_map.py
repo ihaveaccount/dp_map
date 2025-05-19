@@ -327,89 +327,41 @@ def main():
                 target_vx_min, target_vx_max, target_vy_min, target_vy_max = anim['target_view']
                 interp_x_min, interp_x_max, interp_y_min, interp_y_max = mapper.interpolate_zoom(anim)
                 
-                # Вычисляем текущую ширину области просмотра в градусах
                 current_width = math.degrees(interp_x_max - interp_x_min)
+                sorted_keyframes = sorted(mapper.keyframes, key=lambda k: -k['target_view_width'])
                 
-                # Начальная и конечная ширина для всей анимации
-                start_width = math.degrees(anim['start_view'][1] - anim['start_view'][0]) 
-                target_width = math.degrees(anim['target_view'][1] - anim['target_view'][0])
-                
-                # Сортируем ключевые кадры по убыванию ширины просмотра
-                sorted_keyframes = sorted(mapper.keyframes, key=lambda k: k['target_view_width'], reverse=True)
-                
-                # Находим индекс нужного ключевого кадра для конечной ширины
-                target_keyframe_idx = len(sorted_keyframes) - 1  # По умолчанию - последний кадр
-                for i, kf in enumerate(sorted_keyframes):
-                    if target_width >= kf['target_view_width']:
-                        target_keyframe_idx = i
+                # Находим соседние ключевые кадры для текущей ширины
+                left_idx, right_idx = 0, 0
+                for i in range(len(sorted_keyframes)-1):
+                    if sorted_keyframes[i]['target_view_width'] >= current_width >= sorted_keyframes[i+1]['target_view_width']:
+                        left_idx = i
+                        right_idx = i + 1
                         break
-                
-                # Находим индекс для начальной ширины
-                start_keyframe_idx = 0  # По умолчанию - первый кадр
-                for i, kf in enumerate(sorted_keyframes):
-                    if start_width >= kf['target_view_width']:
-                        start_keyframe_idx = i
-                        break
-                
-                # Шкала интерполяции для всего пути анимации
-                if target_width < start_width:
-                    # Зум внутрь
-                    global_t = (start_width - current_width) / (start_width - target_width)
                 else:
-                    # Зум наружу
-                    global_t = (current_width - start_width) / (target_width - start_width)
-                
-                # Ограничиваем глобальный прогресс в пределах [0, 1]
-                global_t = max(0, min(1, global_t))
-                
-                # Линейная интерполяция для определения текущего эффективного индекса ключевого кадра
-                effective_idx = start_keyframe_idx + global_t * (target_keyframe_idx - start_keyframe_idx)
-                
-                # Находим левый и правый ключевые кадры для интерполяции
-                left_idx = int(math.floor(effective_idx))
-                right_idx = min(int(math.ceil(effective_idx)), len(sorted_keyframes) - 1)
-                
-                # Если индексы совпадают, мы внутри одного кадра
-                if left_idx == right_idx:
-                    current_keyframe = sorted_keyframes[left_idx]
-                    # Применяем параметры текущего кадра
-                    for param in ['L1', 'L2', 'M1', 'M2', 'G', 'DT', 'MAX_ITER']:
-                        if param in current_keyframe['params']:
-                            if param == 'MAX_ITER':
-                                mapper.params[param] = int(current_keyframe['params'][param])
-                            else:
-                                mapper.params[param] = float(current_keyframe['params'][param])
+                    if current_width >= sorted_keyframes[0]['target_view_width']:
+                        left_idx = right_idx = 0
+                    else:
+                        left_idx = right_idx = len(sorted_keyframes)-1
 
-
-
-                else:
-                    # Локальный коэффициент интерполяции между двумя соседними кадрами
-                    local_t = effective_idx - left_idx
-                    
-                    left_keyframe = sorted_keyframes[left_idx]
-                    right_keyframe = sorted_keyframes[right_idx]
-                    
-                    print("current width ",current_width)
-
-                    # Интерполируем параметры между левым и правым кадрами
-                    for param in ['L1', 'L2', 'M1', 'M2', 'G', 'DT', 'MAX_ITER']:
-                        if param in left_keyframe['params'] and param in right_keyframe['params']:
-                            left_val = float(left_keyframe['params'][param])
-                            right_val = float(right_keyframe['params'][param])
-                            
-                            # Для MAX_ITER используем целочисленную интерполяцию
-                            if param == 'MAX_ITER':
-                                mapper.params[param] = int(left_val + (right_val - left_val) * local_t)
-                            else:
-                                
-                                mapper.params[param] = left_val + (right_val - left_val) * local_t
-                                print(param," -> ", mapper.params[param])
-                                
+                left_kf = sorted_keyframes[left_idx]
+                right_kf = sorted_keyframes[right_idx]
                 
-                # Обновляем вид
-                # print(f"Interpolating view: {interp_x_min} -> {interp_x_max}, {interp_y_min} -> {interp_y_max}")
+                # Рассчитываем локальный коэффициент интерполяции
+                width_diff = left_kf['target_view_width'] - right_kf['target_view_width']
+                local_t = (current_width - right_kf['target_view_width'])/width_diff if width_diff != 0 else 0.0
+                
+                # Интерполируем параметры между кадрами
+                for param in ['L1', 'L2', 'M1', 'M2', 'G', 'DT', 'MAX_ITER']:
+                    if param in left_kf['params'] and param in right_kf['params']:
+                        l_val = left_kf['params'][param]
+                        r_val = right_kf['params'][param]
+                        
+                        if param == 'MAX_ITER':
+                            mapper.params[param] = int(l_val + (r_val - l_val) * local_t)
+                        else:
+                            mapper.params[param] = l_val + (r_val - l_val) * local_t
+
                 mapper.set_current_view(interp_x_min, interp_x_max, interp_y_min, interp_y_max)
-
 
             anim['step'] += 1
 
@@ -537,6 +489,8 @@ def main():
                                     pygame.K_w, pygame.K_s, pygame.K_a, pygame.K_d,
                                     pygame.K_q, pygame.K_e, pygame.K_z, pygame.K_x,
                                     pygame.K_c, pygame.K_v]:
+                        
+                        print(f"Updating: {params}")
                         rgb_data = mapper.calc_and_get_rgb_data()
                         current_surface = create_surface_from_normalized_data(rgb_data)
 
@@ -544,7 +498,7 @@ def main():
                         
 
                 
-                        print(f"Params updated: {params}")
+                        
 
  
 
