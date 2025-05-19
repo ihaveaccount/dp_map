@@ -30,4 +30,4 @@ run.sh is needed to restart script in case of GPU hang.
 
  ## create_video.sh - wrapper for ffmpeg
 
-    create_video.sh path/to/folder
+    ./create_video.sh path/to/folder

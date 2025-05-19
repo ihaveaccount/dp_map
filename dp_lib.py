@@ -22,7 +22,7 @@ class Mapper:
         self.params = params or {}
         self.raw_data = None
         self.normalized_data = None
-        
+        self.keyframes = []  # Новое поле для хранения ключевых кадров
         
     @staticmethod
     
@@ -128,29 +128,45 @@ class Mapper:
         return self.normalized_data
 
     
-    def save_state(self, filename, target_view=None):
-        # Если target_view не передан, используем текущий view
-        if target_view is None:
-            target_view = list(self.get_current_view())
+
+
+    def add_keyframe(self, filename, view_width_deg):
+        """Добавляет ключевой кадр только с параметрами маятника"""
+        # Копируем параметры, исключая current_view
+        params_to_save = {k: v for k, v in self.params.items() if k not in ['current_view']}
+        
+        new_keyframe = {
+            "target_view_width": view_width_deg,
+            "params": params_to_save
+        }
+        
+        self.keyframes.append(new_keyframe)
+        self._save_keyframes(filename)
+
+    def _save_keyframes(self, filename):
+        """Сохраняет ключевые кадры и целевой вид отдельно"""
         state = {
-            "params": self.params.copy(),  # Сохраняем все текущие параметры
-            "target_view": target_view
+            "keyframes": self.keyframes,
+            "target_view": list(self.get_current_view())
         }
         with open(filename, 'w') as f:
             json.dump(state, f, indent=2)
 
+
     @classmethod
     def load_state(cls, filename, existing_mapper=None):
+        
         with open(filename) as f:
             state = json.load(f)
         
-        # Для существующего маппера: обновляем параметры
         if existing_mapper:
+            existing_mapper.keyframes = state.get("keyframes", [])
             existing_mapper.params.update(state.get("params", {}))
             return existing_mapper, state.get("target_view")
         
-        # Для нового маппера: создаем с загруженными параметрами
-        return cls(1, 1, state.get("params", {})), state.get("target_view")
+        new_mapper = cls(1, 1, state.get("params", {}))
+        new_mapper.keyframes = state.get("keyframes", [])
+        return new_mapper, state.get("target_view")
  
 
     def get_current_view(self):

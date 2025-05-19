@@ -238,8 +238,17 @@ def main():
         print("Performing initial calculation...")
         
         if not args.skipcalc:           
-            
+
+            # Обновляем целевой вид для следующего приближения
+            new_target = (x_min, x_max, y_min, y_max)
+            view_width_deg = math.degrees(x_max - x_min)
+            mapper.set_current_view(*new_target)
+
             rgb_data = mapper.calc_and_get_rgb_data()
+            
+            if not args.anim:
+                mapper.add_keyframe(args.pfile, view_width_deg)
+
 
             if args.anim:
                 save_to_file(rgb_data)
@@ -273,12 +282,15 @@ def main():
             # Загружаем параметры ИЗ ФАЙЛА в маппер
             mapper, coords = Mapper.load_state(args.pfile, existing_mapper=mapper)
             
+
             # Получаем целевые параметры ИЗ ЗАГРУЖЕННОГО СОСТОЯНИЯ
             target_params = mapper.params.copy()
             
+            print(coords)
+
             # Добавляем комбинированную анимацию
             animation_queue.append({
-                'type': 'combined',
+                'type': 'keyframe',
                 'start_view': (x_min, x_max, y_min, y_max),  # Начальный вид
                 'target_view': coords,                        # Вид из файла
                 'start_params': initial_params,               # Параметры до загрузки
@@ -298,7 +310,8 @@ def main():
         if animation_queue:
             anim = animation_queue[0]
 
-            anim['step'] += 1
+            
+            
             t = anim['step'] / anim['total_steps']
           
             if anim['type'] == 'zoom':
@@ -310,24 +323,95 @@ def main():
                     mapper.set_current_view(interp_x_min, interp_x_max, interp_y_min, interp_y_max)   
 
 
-
-            if anim['type'] == 'combined':
-                # Интерполяция параметров
-
-
-                current_params = {}
-                for key in anim['start_params']:
-                    start = anim['start_params'][key]
-                    target = anim['target_params'].get(key, start)  # Безопасный доступ
-                    current_params[key] = start + (target - start) * t
-
-                
-                # Интерполяция зума
+            if anim['type'] == 'keyframe':
+                target_vx_min, target_vx_max, target_vy_min, target_vy_max = anim['target_view']
                 interp_x_min, interp_x_max, interp_y_min, interp_y_max = mapper.interpolate_zoom(anim)
                 
-                # Обновляем маппер
-                mapper.params.update(current_params)
+                # Вычисляем текущую ширину области просмотра в градусах
+                current_width = math.degrees(interp_x_max - interp_x_min)
+                
+                # Начальная и конечная ширина для всей анимации
+                start_width = math.degrees(anim['start_view'][1] - anim['start_view'][0]) 
+                target_width = math.degrees(anim['target_view'][1] - anim['target_view'][0])
+                
+                # Сортируем ключевые кадры по убыванию ширины просмотра
+                sorted_keyframes = sorted(mapper.keyframes, key=lambda k: k['target_view_width'], reverse=True)
+                
+                # Находим индекс нужного ключевого кадра для конечной ширины
+                target_keyframe_idx = len(sorted_keyframes) - 1  # По умолчанию - последний кадр
+                for i, kf in enumerate(sorted_keyframes):
+                    if target_width >= kf['target_view_width']:
+                        target_keyframe_idx = i
+                        break
+                
+                # Находим индекс для начальной ширины
+                start_keyframe_idx = 0  # По умолчанию - первый кадр
+                for i, kf in enumerate(sorted_keyframes):
+                    if start_width >= kf['target_view_width']:
+                        start_keyframe_idx = i
+                        break
+                
+                # Шкала интерполяции для всего пути анимации
+                if target_width < start_width:
+                    # Зум внутрь
+                    global_t = (start_width - current_width) / (start_width - target_width)
+                else:
+                    # Зум наружу
+                    global_t = (current_width - start_width) / (target_width - start_width)
+                
+                # Ограничиваем глобальный прогресс в пределах [0, 1]
+                global_t = max(0, min(1, global_t))
+                
+                # Линейная интерполяция для определения текущего эффективного индекса ключевого кадра
+                effective_idx = start_keyframe_idx + global_t * (target_keyframe_idx - start_keyframe_idx)
+                
+                # Находим левый и правый ключевые кадры для интерполяции
+                left_idx = int(math.floor(effective_idx))
+                right_idx = min(int(math.ceil(effective_idx)), len(sorted_keyframes) - 1)
+                
+                # Если индексы совпадают, мы внутри одного кадра
+                if left_idx == right_idx:
+                    current_keyframe = sorted_keyframes[left_idx]
+                    # Применяем параметры текущего кадра
+                    for param in ['L1', 'L2', 'M1', 'M2', 'G', 'DT', 'MAX_ITER']:
+                        if param in current_keyframe['params']:
+                            if param == 'MAX_ITER':
+                                mapper.params[param] = int(current_keyframe['params'][param])
+                            else:
+                                mapper.params[param] = float(current_keyframe['params'][param])
+
+
+
+                else:
+                    # Локальный коэффициент интерполяции между двумя соседними кадрами
+                    local_t = effective_idx - left_idx
+                    
+                    left_keyframe = sorted_keyframes[left_idx]
+                    right_keyframe = sorted_keyframes[right_idx]
+                    
+                    print("current width ",current_width)
+
+                    # Интерполируем параметры между левым и правым кадрами
+                    for param in ['L1', 'L2', 'M1', 'M2', 'G', 'DT', 'MAX_ITER']:
+                        if param in left_keyframe['params'] and param in right_keyframe['params']:
+                            left_val = float(left_keyframe['params'][param])
+                            right_val = float(right_keyframe['params'][param])
+                            
+                            # Для MAX_ITER используем целочисленную интерполяцию
+                            if param == 'MAX_ITER':
+                                mapper.params[param] = int(left_val + (right_val - left_val) * local_t)
+                            else:
+                                
+                                mapper.params[param] = left_val + (right_val - left_val) * local_t
+                                print(param," -> ", mapper.params[param])
+                                
+                
+                # Обновляем вид
+                # print(f"Interpolating view: {interp_x_min} -> {interp_x_max}, {interp_y_min} -> {interp_y_max}")
                 mapper.set_current_view(interp_x_min, interp_x_max, interp_y_min, interp_y_max)
+
+
+            anim['step'] += 1
 
 
 
@@ -337,14 +421,23 @@ def main():
                 mapper.set_current_view(target_vx_min, target_vx_max, target_vy_min, target_vy_max)
                 animation_queue.pop(0)
 
+
+        
             start_time = time.time()
-            rgb_data = mapper.calc_and_get_rgb_data()
-            if  args.anim:
-                save_to_file(rgb_data)
-            
-                frame_counter += 1
+            if not args.skipcalc:
+                rgb_data = mapper.calc_and_get_rgb_data()
+
+
+
+                if  args.anim:
+                    save_to_file(rgb_data)
+                
+                    frame_counter += 1
+                else:
+                    current_surface = create_surface_from_normalized_data(rgb_data)
             else:
-                current_surface = create_surface_from_normalized_data(rgb_data)
+                frame_counter += 1
+            
             end_time = time.time()
 
 
@@ -396,7 +489,7 @@ def main():
                 if event.type == pygame.KEYDOWN:
 
 
-                    step = 0.1
+                    step = 0.01
                     iter_step = 100
                     # Получаем текущие параметры из маппера
                     params = mapper.params
@@ -447,10 +540,7 @@ def main():
                         rgb_data = mapper.calc_and_get_rgb_data()
                         current_surface = create_surface_from_normalized_data(rgb_data)
 
-                        if args.pfile != "":
-                            
-                            mapper.save_state(args.pfile)
-                            
+
                         
 
                 
@@ -480,15 +570,25 @@ def main():
                         target_y_min = data_y - new_span_y
                         target_y_max = data_y +  new_span_y
 
+                        print("Zooming, starting animation...")
                         mapper.set_current_view(target_x_min, target_x_max, target_y_min, target_y_max)
                         rgb_data = mapper.calc_and_get_rgb_data()
                         current_surface = create_surface_from_normalized_data(rgb_data)       
-                        
-                        if args.pfile != "":
-                            
-                            mapper.save_state(args.pfile)
 
-                        print("Zooming, starting animation...")
+
+                        # Сохраняем текущий масштаб и параметры
+                        current_view = mapper.get_current_view()
+                        view_width = current_view[1] - current_view[0]
+                        view_width_deg = math.degrees(view_width)
+                        mapper.add_keyframe(args.pfile, view_width_deg)
+                        
+                        
+
+
+                            
+                            
+
+                        
                         
 
 
