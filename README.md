@@ -4,11 +4,17 @@ Before launching:
 
     pip install pygame pyopencl numpy pillow scipy
 
-First run dp_map.py without parameters to find the point. It will open a window where you can click. Then it will create a subfolder in frames/, where the selected point will be recorded
+First run dp_map.py without parameters to find the point. 
 
-Run the animation with the test point:
+    ./run.sh --height 720
 
-    python dp_map.py --pfile testpoint.txt --anim --folder testpoint
+It will open a window where you can click. Then it will create a subfolder in frames/, where the selected point will be recorded
+
+Or run windowless rendering with the test point:
+
+    ./run.sh --pfile testpoint.json --anim --folder testpoint
+
+run.sh is needed to restart script in case of GPU hang.
 
 ## Parameters
  - --anim - enable animation rendering. No graphics are displayed on the screen. Frames will be written in selected folder
