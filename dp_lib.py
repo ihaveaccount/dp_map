@@ -131,9 +131,15 @@ class Mapper:
 
 
     def add_keyframe(self, filename, view_width_deg):
-        """Добавляет ключевой кадр только с параметрами маятника"""
+        """Добавляет ключевой кадр только при изменении параметров"""
         # Копируем параметры, исключая current_view
         params_to_save = {k: v for k, v in self.params.items() if k not in ['current_view']}
+        
+        # Проверяем, отличаются ли параметры от предыдущего кадра
+        if self.keyframes:
+            last_params = self.keyframes[-1]["params"]
+            if params_to_save == last_params:
+                return  # Параметры не изменились - пропускаем сохранение
         
         new_keyframe = {
             "target_view_width": view_width_deg,
@@ -142,6 +148,8 @@ class Mapper:
         
         self.keyframes.append(new_keyframe)
         self._save_keyframes(filename)
+
+
 
     def _save_keyframes(self, filename):
         """Сохраняет ключевые кадры и целевой вид отдельно"""
