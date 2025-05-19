@@ -42,7 +42,8 @@ parser.add_argument('--iter', type=int, default=5000, help='Number of iterations
 args = parser.parse_args()
 
 
-
+if args.frames and not args.anim:
+    args.anim = True
  
 
 if args.vertical:
@@ -311,7 +312,7 @@ def main():
             anim = animation_queue[0]
 
             
-            
+            anim['step'] += 1
             t = anim['step'] / anim['total_steps']
           
             if anim['type'] == 'zoom':
@@ -372,7 +373,7 @@ def main():
 
 
 
-            anim['step'] += 1
+            
 
 
 
