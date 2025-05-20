@@ -32,7 +32,7 @@ __kernel void simulate_pendulum(
     for (int i = 0; i < MAX_ITERATIONS; ++i) 
     {
         // Уравнения движения для двойного маятника (упрощенные для читаемости)
-        // Источник: https://www.myphysicslab.com/pendulum/doublpendulum-en.html
+        // Источник: https://www.myphysicslab.com/pendulum/double-pendulum-en.html
         // (с поправкой на обозначения M1, M2 как массы грузов, а не стержней)
 
         double delta_th = th1 - th2;

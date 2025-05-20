@@ -42,8 +42,7 @@ parser.add_argument('--iter', type=int, default=5000, help='Number of iterations
 args = parser.parse_args()
 
 
-if args.frames and not args.anim:
-    args.anim = True
+
  
 
 if args.vertical:
@@ -296,7 +295,7 @@ def main():
                 'target_view': coords,                        # Вид из файла
                 'start_params': initial_params,               # Параметры до загрузки
                 'target_params': target_params,               # Параметры из файла
-                'step': args.start,
+                'step': frame_counter,
                 'total_steps': args.frames
             })
 
@@ -451,7 +450,7 @@ def main():
                 if event.type == pygame.KEYDOWN:
 
 
-                    step = 0.01
+                    step = 0.1
                     iter_step = 100
                     # Получаем текущие параметры из маппера
                     params = mapper.params
@@ -484,9 +483,9 @@ def main():
                         
                     # Шаг времени
                     elif event.key == pygame.K_z:
-                        params['DT'] = round(params['DT'] - 0.01, 2)
+                        params['DT'] = round(params['DT'] - step, 2)
                     elif event.key == pygame.K_x:
-                        params['DT'] = round(params['DT'] + 0.01, 2)
+                        params['DT'] = round(params['DT'] + step, 2)
                         
                     # Итерации
                     elif event.key == pygame.K_c:
