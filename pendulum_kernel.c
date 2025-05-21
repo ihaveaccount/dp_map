@@ -13,12 +13,15 @@ __kernel void simulate_pendulum(
     const double G,
     const double DT,
     const int MAX_ITERATIONS,
-    const int num_points)
+    const int width,
+    const int height)
 {
-    int gid = get_global_id(0);
-    if (gid >= num_points) {
+    int row = get_global_id(0);
+    int col = get_global_id(1);
+    if (row >= height || col >= width) {
         return;
     }
+    int gid = row * width + col;
 
     double th1 = initial_theta1s[gid];
     double th2 = initial_theta2s[gid];
@@ -26,8 +29,6 @@ __kernel void simulate_pendulum(
     double w2 = 0.0f; // Начальная угловая скорость второго сегмента
 
     int cycles = 0;
-
-
 
     for (int i = 0; i < MAX_ITERATIONS; ++i) 
     {
@@ -83,7 +84,5 @@ __kernel void simulate_pendulum(
         }
     }
 
-
-    
     cycle_counts[gid] = cycles;
 }

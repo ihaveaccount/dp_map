@@ -275,7 +275,9 @@ class DPMapper(Mapper):
             np.double(self.params.get('M2', 1.0)),
             np.double(self.params.get('G', 9.81)),            
             np.double(self.params.get('DT', 0.2)),
-            np.int32(self.params.get('MAX_ITER', 5000))
+            np.int32(self.params.get('MAX_ITER', 5000)),
+            np.int32(self.width),
+            np.int32(self.height)
         )
 
     def compute_map(self):
@@ -294,11 +296,11 @@ class DPMapper(Mapper):
 
         kernel_args = (
             input_theta1_buf, input_theta2_buf, self.output_buf,
-            *self.get_kernel_params(),
-            np.int32(self.num_points)
+            *self.get_kernel_params()
         )
         
-        self.prg.simulate_pendulum(self.queue, (self.num_points,), None, *kernel_args).wait()
+        global_size = (self.height, self.width)
+        self.prg.simulate_pendulum(self.queue, global_size, None, *kernel_args).wait()
         cl.enqueue_copy(self.queue, self.raw_results_np, self.output_buf).wait()
         return self.raw_results_np.copy()
 
