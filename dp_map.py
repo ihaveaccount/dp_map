@@ -38,6 +38,12 @@ parser.add_argument('--l2', type=float, default=1.0, help='Length of the second 
 parser.add_argument('--g', type=float, default=9.81, help='Gravitational acceleration (default: 9.81)')
 parser.add_argument('--dt', type=float, default=0.2, help='Time step (default: 0.2)')
 parser.add_argument('--iter', type=int, default=5000, help='Number of iterations (default: 5000)')
+parser.add_argument('--min_x', type=float, default=None, help='Min X')
+parser.add_argument('--max_x', type=float, default=None, help='Max X')
+parser.add_argument('--min_y', type=float, default=None, help='Min Y ')
+parser.add_argument('--max_y', type=float, default=None, help='Max Y')
+parser.add_argument('--median', type=int, default=3, help='Размер медианного фильтра (0 — не применять)')
+parser.add_argument('--invert', action='store_true', help='Инвертировать изображение (минимум=255, максимум=0)')
 
 args = parser.parse_args()
 
@@ -49,6 +55,9 @@ if args.vertical:
     wid = round(args.height/1.777);
 else:
     wid = round(args.height*1.777);
+
+
+
 
 
 if wid %2 != 0: wid += 1
@@ -75,10 +84,24 @@ else:
     modx = 1.78
     mody = modx * (HEIGHT / WIDTH)
 
+ratio = WIDTH / HEIGHT
+
 x_min = -math.pi*modx
 x_max = math.pi*modx
 y_min = -math.pi*mody
 y_max = math.pi*mody
+
+# Переопределяем границы, если заданы явно
+if args.min_x is not None:
+    x_min = args.min_x
+    y_min = args.min_x / ratio
+if args.max_x is not None:
+    x_max = args.max_x
+    x_max = args.max_x / ratio
+if args.min_y is not None:
+    y_min = args.min_y
+if args.max_y is not None:
+    y_max = args.max_y
 
 frame_counter = 0
 
@@ -180,6 +203,7 @@ def main():
     global animation_queue,frame_counter # Разрешаем модификацию
     global x_min, x_max, y_min, y_max
 
+    view_history = []
 
 
 
@@ -220,6 +244,9 @@ def main():
         kernel_file=args.kernel,
         params=params.copy()  # Гарантируем копию, а не ссылку
     )
+    mapper.set_median_filter_size(args.median)
+    mapper.set_invert(args.invert)
+
     target_vx_min, target_vx_max, target_vy_min, target_vy_max = x_min, x_max, y_min, y_max
     # mapper.set_current_view(x_min, x_max, y_min, y_max)
     
@@ -254,6 +281,7 @@ def main():
                 save_to_file(rgb_data)
                 frame_counter += 1
             else:
+                mapper.init_point_file(args.pfile)
                 current_surface = create_surface_from_normalized_data(rgb_data)
 
 
@@ -304,6 +332,7 @@ def main():
     total_time = time.time()
     rendered_frames = 0
     running = True
+    view_history = [mapper.get_current_view()]  # Инициализируем стек первым видом
     while running:
 
         # --- Логика обновления и анимации ---
@@ -492,12 +521,15 @@ def main():
                         params['MAX_ITER'] += iter_step
                     elif event.key == pygame.K_v:
                         params['MAX_ITER'] = max(100, params['MAX_ITER'] - iter_step)
-                    
+                    elif event.key == pygame.K_r:
+                        mapper.set_current_view(x_min, x_max, y_min, y_max)
+
+                                        
                     # Обновляем и перерисовываем
                     if event.key in [pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT,
                                     pygame.K_w, pygame.K_s, pygame.K_a, pygame.K_d,
                                     pygame.K_q, pygame.K_e, pygame.K_z, pygame.K_x,
-                                    pygame.K_c, pygame.K_v]:
+                                    pygame.K_c, pygame.K_v, pygame.K_r]:
                         
                         print(f"Updating: {params}")
                         rgb_data = mapper.calc_and_get_rgb_data()
@@ -533,20 +565,37 @@ def main():
                         target_y_min = data_y - new_span_y
                         target_y_max = data_y +  new_span_y
 
-                        print("Zooming, starting animation...")
+
+
+
+                        view_width = target_x_max-target_x_min
+                        view_width_deg = math.degrees(view_width)
+
+                        print("Zooming to ", view_width_deg)
                         mapper.set_current_view(target_x_min, target_x_max, target_y_min, target_y_max)
                         rgb_data = mapper.calc_and_get_rgb_data()
                         current_surface = create_surface_from_normalized_data(rgb_data)       
 
 
                         # Сохраняем текущий масштаб и параметры
-                        current_view = mapper.get_current_view()
-                        view_width = current_view[1] - current_view[0]
-                        view_width_deg = math.degrees(view_width)
+                        
                         mapper.add_keyframe(args.pfile, view_width_deg)
                         
+                        # Сохраняем текущий вид в стек истории только если он отличается от последнего
+                        current_view = mapper.get_current_view()
+                        if not view_history or current_view != view_history[-1]:
+                            view_history.append(current_view)
                         
-
+                    if event.button == 3:  # Правая кнопка мыши — возврат
+                        if len(view_history) > 1:
+                            # Удаляем текущий вид
+                            view_history.pop()
+                            # Берём предпоследний (теперь последний) и возвращаемся к нему
+                            prev_view = view_history[-1]
+                            mapper.set_current_view(*prev_view)
+                            rgb_data = mapper.calc_and_get_rgb_data()
+                            current_surface = create_surface_from_normalized_data(rgb_data)
+                            print("Returned to previous view:", prev_view)
 
                             
                             

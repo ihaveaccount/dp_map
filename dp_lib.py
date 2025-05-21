@@ -131,7 +131,7 @@ class Mapper:
 
 
     def add_keyframe(self, filename, view_width_deg):
-        """Добавляет ключевой кадр только при изменении параметров"""
+        """Добавляет ключевой кадр только при изменении параметров и обновляет target_view"""
         # Копируем параметры, исключая current_view
         params_to_save = {k: v for k, v in self.params.items() if k not in ['current_view']}
         
@@ -139,7 +139,9 @@ class Mapper:
         if self.keyframes:
             last_params = self.keyframes[-1]["params"]
             if params_to_save == last_params:
-                return  # Параметры не изменились - пропускаем сохранение
+                # Даже если параметры не изменились, обновим target_view
+                self._save_keyframes(filename)
+                return  # Параметры не изменились - пропускаем добавление, но обновляем view
         
         new_keyframe = {
             "target_view_width": view_width_deg,
@@ -191,21 +193,57 @@ class Mapper:
         """Генерирует RGB данные из нормализованных 2D данных с предобработкой"""
         img_data = self.normalized_data.copy()
         
-        # Применяем медианный фильтр 3x3 для сглаживания
-        img_data = median_filter(img_data, size=3)
+        median_size = self.get_median_filter_size()
         
+        if median_size and median_size > 0:
+            img_data = median_filter(img_data, size=median_size)        
         # Нормализуем и конвертируем в uint8
         if img_data.max() <= 1.0:
             img_data = (img_data * 255).astype(np.uint8)
         else:
             img_data = img_data.astype(np.uint8)
         
+
+        #Инверсия, если требуется
+        if self.get_invert():
+            img_data = 255 - img_data
+
         # Создаем 3-канальное изображение
         height, width = img_data.shape
         rgb_data = np.zeros((height, width, 3), dtype=np.uint8)
         rgb_data[:, :, :] = img_data[..., np.newaxis]  # Копируем данные во все 3 канала
         
         return rgb_data
+
+    def init_point_file(self, filename):
+        """Создаёт или перезаписывает файл с начальными параметрами и текущим видом"""
+        state = {
+            "start_params": {
+                "L1": self.params.get('L1', 1.0),
+                "L2": self.params.get('L2', 1.0),
+                "M1": self.params.get('M1', 1.0),
+                "M2": self.params.get('M2', 1.0),
+                "G": self.params.get('G', 9.81),
+                "DT": self.params.get('DT', 0.2),
+                "MAX_ITER": self.params.get('MAX_ITER', 5000),
+            },
+            "start_view": list(self.get_current_view())
+        }
+        with open(filename, 'w') as f:
+            json.dump(state, f, indent=2)
+
+    def set_median_filter_size(self, size):
+        """Устанавливает размер медианного фильтра (0 — не применять)"""
+        self._median_filter_size = size
+
+    def get_median_filter_size(self):
+        return getattr(self, '_median_filter_size', 0)
+
+    def set_invert(self, invert: bool):
+        self._invert = invert
+
+    def get_invert(self):
+        return getattr(self, '_invert', False)
 
 
 
@@ -235,7 +273,7 @@ class DPMapper(Mapper):
             np.double(self.params.get('L2', 1.0)),
             np.double(self.params.get('M1', 1.0)),
             np.double(self.params.get('M2', 1.0)),
-            np.double(self.params.get('G', 9.81)),
+            np.double(self.params.get('G', 9.81)),            
             np.double(self.params.get('DT', 0.2)),
             np.int32(self.params.get('MAX_ITER', 5000))
         )
