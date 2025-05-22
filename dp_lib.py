@@ -253,7 +253,6 @@ class CLMapper(Mapper):
         self.kernel_function_name = 'simulate' # Default kernel function name
         self.default_view_from_kernel = {} # Store default view from kernel comments
         self._parse_kernel_parameters(kernel_code)
-        self._parse_kernel_function_name(kernel_code)
         self._parse_kernel_view_defaults(kernel_code)
         
         self.prg = cl.Program(self.ctx, kernel_code).build()
@@ -288,23 +287,8 @@ class CLMapper(Mapper):
                         self.params[name] = default
                     self.param_order.append(name)
         # Ensure required parameters are present
-        if 'DT' not in self.params:
-            self.params['DT'] = 0.2
-        if 'MAX_ITERATIONS' not in self.params: # Renamed from MAX_ITER
-            self.params['MAX_ITERATIONS'] = 5000
-        
-        # Ensure DT and MAX_ITERATIONS are in the param_order if they weren't explicitly in comments
-        if 'DT' not in self.param_order:
-            self.param_order.append('DT')
-        if 'MAX_ITERATIONS' not in self.param_order:
-            self.param_order.append('MAX_ITERATIONS')
 
 
-    def _parse_kernel_function_name(self, kernel_code):
-        func_pattern = re.compile(r'//\s*KERNEL_FUNCTION:\s*(\w+)')
-        match = func_pattern.search(kernel_code)
-        if match:
-            self.kernel_function_name = match.group(1)
 
     def _parse_kernel_view_defaults(self, kernel_code):
         view_pattern = re.compile(r'//\s*VIEW_DEFAULT:\s*(x_min|x_max|y_min|y_max)\s+([\d\.\-]+)')
@@ -333,13 +317,13 @@ class CLMapper(Mapper):
                 aspect_kernel = span_x / span_y
                 aspect_target = width / height
 
-                if aspect_kernel < aspect_target:
+                if (aspect_kernel < aspect_target):
                     # Нужно увеличить span_x
                     new_span_x = span_y * aspect_target
                     center_x = (x_min + x_max) / 2
                     x_min = center_x - new_span_x / 2
                     x_max = center_x + new_span_x / 2
-                elif aspect_kernel > aspect_target:
+                elif (aspect_kernel > aspect_target):
                     # Нужно увеличить span_y
                     new_span_y = span_x / aspect_target
                     center_y = (y_min + y_max) / 2
@@ -350,21 +334,23 @@ class CLMapper(Mapper):
                 self.default_view_from_kernel['x_max'] = x_max
                 self.default_view_from_kernel['y_min'] = y_min
                 self.default_view_from_kernel['y_max'] = y_max
+                
+                self.params['current_view'] = (x_min, x_max, y_min, y_max)
 
     def get_kernel_params(self):
         params = []
         for name in self.param_order:
-            value = self.params.get(name) # Use .get() in case a param is in order but not in self.params (shouldn't happen with current logic)
+            value = self.params.get(name)
+            # print(f"param {name}: {value} ({type(value)})")  # <-- добавьте это
             if isinstance(value, float):
                 params.append(np.double(value))
             elif isinstance(value, int):
                 params.append(np.int32(value))
             else:
-                params.append(value) # Fallback for other types, though not expected
-        
-        # Always append width and height last, as they are hardcoded in kernel signature
+                params.append(value)
         params.append(np.int32(self.width))
         params.append(np.int32(self.height))
+        # print("Final params:", params)
         return tuple(params)
 
     def compute_map(self):
@@ -388,6 +374,8 @@ class CLMapper(Mapper):
             self.output_buf,
             *self.get_kernel_params()
         )
+        
+        # print("kernel_args types:", [type(a) for a in kernel_args])
         
         global_size = (self.height, self.width) # PyOpenCL expects (rows, cols) for 2D
         kernel_func = getattr(self.prg, self.kernel_function_name)

@@ -1,5 +1,4 @@
 // pendulum_kernel.c
-// KERNEL_FUNCTION: simulate_pendulum
 // PARAM: L1 double 1.0
 // PARAM: L2 double 1.0
 // PARAM: M1 double 1.0
@@ -14,7 +13,7 @@
 
 #define M_PI_F 3.14159265358979323846f
 
-__kernel void simulate_pendulum(
+__kernel void simulate(
     __global const double* initial_xs, // Renamed from initial_theta1s
     __global const double* initial_ys, // Renamed from initial_theta2s
     __global int* cycle_counts,          // Output array: number of cycles for each point

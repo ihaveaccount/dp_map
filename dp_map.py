@@ -8,7 +8,7 @@ import argparse
 import pathlib
 import re
 
-from dp_lib import DPMapper, CLMapper, Mapper # Import both mappers and base Mapper
+from dp_lib import CLMapper, Mapper # Import both mappers and base Mapper
 import time
 from PIL import Image
 
@@ -160,22 +160,6 @@ def main():
     
     mapper.set_median_filter_size(args.median)
     mapper.set_invert(args.invert)
-
-    # Determine initial view
-    # Start with kernel defaults if available and not overridden by cmd line
-    if args.backend == "opencl" and mapper.default_view_from_kernel:
-        x_min = mapper.default_view_from_kernel.get('x_min', -math.pi)
-        x_max = mapper.default_view_from_kernel.get('x_max', math.pi)
-        y_min = mapper.default_view_from_kernel.get('y_min', -math.pi)
-        y_max = mapper.default_view_from_kernel.get('y_max', math.pi)
-    else: # Fallback to traditional defaults
-        ratio = WIDTH / HEIGHT
-        modx = 1.78 # Standard 16:9 ratio adjustment
-        mody = modx * (HEIGHT / WIDTH) # Maintain aspect ratio
-        x_min = -math.pi * modx
-        x_max = math.pi * modx
-        y_min = -math.pi * mody
-        y_max = math.pi * mody
     
     # Override with command line arguments if provided
     if args.min_x is not None:
@@ -187,7 +171,9 @@ def main():
     if args.max_y is not None:
         y_max = args.max_y
 
-    mapper.set_current_view(x_min, x_max, y_min, y_max)
+    # mapper.set_current_view(x_min, x_max, y_min, y_max)
+    x_min, x_max, y_min, y_max = mapper.get_current_view()
+    
     target_vx_min, target_vx_max, target_vy_min, target_vy_max = x_min, x_max, y_min, y_max # For animation logic
 
 
