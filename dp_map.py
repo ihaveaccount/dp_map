@@ -1,18 +1,16 @@
+# dp_map.py
 import pygame
 import numpy as np
 import os
 import datetime
 import math
 import argparse 
+import pathlib
+import re
 
-
-
-import Metal as metal
-from dp_lib import *
+from dp_lib import DPMapper, CLMapper, Mapper # Import both mappers and base Mapper
 import time
 from PIL import Image
-
-
 
 parser = argparse.ArgumentParser(description='Double Pendulum Simulation')
 parser.add_argument('--anim', action='store_true', 
@@ -25,102 +23,42 @@ parser.add_argument('--start', type=int, default=0,help='Start frame for animati
 
 parser.add_argument('--folder', type=str, default="",help='Folder to save frames')
 parser.add_argument('--pfile', type=str, default="",help='File with target point coordinates')
-parser.add_argument('--kernel', type=str, default="pendulum_kernel.c",
-                    help='Backend to use for computation (default: opencl)')
+parser.add_argument('--kernel', type=str, default="pendulum.c",
+                    help='Kernel file to use for computation (default: pendulum.c)')
+
 parser.add_argument('--skipcalc', action='store_true',   
                     help='Skip calculation of the map, only show angles info')
 parser.add_argument('--vertical', action='store_true', 
                     help='Use vertical orientation for the window')
-parser.add_argument('--m1', type=float, default=1.0, help='Mass of the first pendulum (default: 1.0)')
-parser.add_argument('--m2', type=float, default=1.0, help='Mass of the second pendulum (default: 1.0)')
-parser.add_argument('--l1', type=float, default=1.0, help='Length of the first pendulum (default: 1.0)')
-parser.add_argument('--l2', type=float, default=1.0, help='Length of the second pendulum (default: 1.0)')
-parser.add_argument('--g', type=float, default=9.81, help='Gravitational acceleration (default: 9.81)')
-parser.add_argument('--dt', type=float, default=0.2, help='Time step (default: 0.2)')
-parser.add_argument('--iter', type=int, default=5000, help='Number of iterations (default: 5000)')
-parser.add_argument('--min_x', type=float, default=None, help='Min X')
-parser.add_argument('--max_x', type=float, default=None, help='Max X')
-parser.add_argument('--min_y', type=float, default=None, help='Min Y ')
-parser.add_argument('--max_y', type=float, default=None, help='Max Y')
+# Removed specific pendulum parameters from args, they will be handled dynamically or by CLMapper
+# parser.add_argument('--m1', type=float, default=1.0, help='Mass of the first pendulum (default: 1.0)')
+# ...
+parser.add_argument('--min_x', type=float, default=None, help='Min X for view (overrides kernel default)')
+parser.add_argument('--max_x', type=float, default=None, help='Max X for view (overrides kernel default)')
+parser.add_argument('--min_y', type=float, default=None, help='Min Y for view (overrides kernel default)')
+parser.add_argument('--max_y', type=float, default=None, help='Max Y for view (overrides kernel default)')
 parser.add_argument('--median', type=int, default=3, help='Размер медианного фильтра (0 — не применять)')
 parser.add_argument('--invert', action='store_true', help='Инвертировать изображение (минимум=255, максимум=0)')
 
+# New arguments for generic parameter passing
+parser.add_argument('--param', nargs=2, action='append', metavar=('NAME', 'VALUE'),
+                    help='Set a kernel parameter. Use multiple --param NAME VALUE for multiple parameters.')
+
 args = parser.parse_args()
 
-
-
- 
-
 if args.vertical:
-    wid = round(args.height/1.777);
+    wid = round(args.height/1.777)
 else:
-    wid = round(args.height*1.777);
-
-
-
-
+    wid = round(args.height*1.777)
 
 if wid %2 != 0: wid += 1
 
 # --- Конфигурация ---
 WIDTH, HEIGHT = wid, args.height
 
-ANIMATION_FRAMES = 1 # Количество кадров для анимации зума/изменения параметров
-ANIMATION_FRAMES_OUT = 1   # Количество кадров для анимации выхода из зума/изменения параметров
 ZOOM_FACTOR = 0.1       # Коэффициент зума при клике мыши  
-PARAM_CHANGE_STEPS = 10 # Количество кадров для изменения параметров
-L1=args.l1
-L2=args.l2
-M1=args.m1
-M2=args.m2
-G=args.g
-DT=args.dt
-ITER=args.iter
-
-if args.vertical:
-    mody = 1.7777
-    modx = 1 # Соотношение сторон для нормализации данных
-else:
-    modx = 1.78
-    mody = modx * (HEIGHT / WIDTH)
-
-ratio = WIDTH / HEIGHT
-
-x_min = -math.pi*modx
-x_max = math.pi*modx
-y_min = -math.pi*mody
-y_max = math.pi*mody
-
-# Переопределяем границы, если заданы явно
-if args.min_x is not None:
-    x_min = args.min_x
-    y_min = args.min_x / ratio
-if args.max_x is not None:
-    x_max = args.max_x
-    x_max = args.max_x / ratio
-if args.min_y is not None:
-    y_min = args.min_y
-if args.max_y is not None:
-    y_max = args.max_y
 
 frame_counter = 0
-
-
-from scipy.ndimage import median_filter
-
-
-
-
-def save_to_file(rgb_data):
-    global frame_counter, frames_dir
-    
-    img = Image.fromarray(rgb_data)
-    filename = os.path.join(frames_dir, f"frame_{frame_counter:05d}.png")
-    img.save(filename)
-
-
-
-
 
 def find_max_frame_number(directory):
     folder = pathlib.Path(directory)
@@ -135,24 +73,16 @@ def find_max_frame_number(directory):
     
     return max_num if max_num != -1 else 0
 
-
- 
-
 # --- Глобальные переменные для анимации и сохранения ---
-
 frames_dir = ""
 animation_queue = [] # [(type, data, current_step, total_steps, prev_data_norm)]
-# type: 'zoom', 'params_change'
-# data for zoom: (target_x_min, target_x_max, target_y_min, target_y_max)
-# data for param_change: new_pendulum_params_tuple (не используется напрямую, т.к. pendulum уже обновлен)
-# prev_data_norm: предыдущие нормализованные данные для блендинга при param_change
 
 def setup_frame_saving():
     global frame_counter, frames_dir
     
     base_dir = "frames"
     
-    if(args.folder == ""):
+    if args.folder == "":
         run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         frames_dir = os.path.join(base_dir, f"run_{HEIGHT}_{run_timestamp}")
     else:
@@ -161,112 +91,121 @@ def setup_frame_saving():
     if not args.pfile:
         args.pfile = os.path.join(frames_dir, "point.json")
 
-    if(args.start > 0):
+    if args.start > 0:
         frame_counter = args.start
     elif args.anim:
-        # Ищем максимальный номер кадра в папке
         max_frame_number = find_max_frame_number(frames_dir)
-
         if max_frame_number > 0:
-            # Если есть уже сохраненные кадры, начинаем с max_frame_number + 1
             frame_counter = max_frame_number + 1
             print(f"Starting from frame {frame_counter}")
         else:
-            # Если нет сохраненных кадров, начинаем с 0
             frame_counter = 0
-        
     
-
     os.makedirs(frames_dir, exist_ok=True)
     print(f"Saving frames to: {frames_dir}")
-
-
 
 def save_to_file(rgb_data):
     """Сохраняет обработанные данные в файл"""
     global frame_counter, frames_dir
     
-    
     img = Image.fromarray(rgb_data)
     filename = os.path.join(frames_dir, f"frame_{frame_counter:05d}.png")
     img.save(filename)
    
-
 def create_surface_from_normalized_data(rgb_data):
     """Создает поверхность Pygame из обработанных данных"""
-    
-    # Транспонируем оси для совместимости с Pygame (width, height, channels)
     return pygame.surfarray.make_surface(rgb_data.transpose(1, 0, 2))
 
-
 def main():
-    global animation_queue,frame_counter # Разрешаем модификацию
-    global x_min, x_max, y_min, y_max
-
+    global animation_queue, frame_counter 
+    
     view_history = []
-
-
-
-
-
-
 
     if not args.anim:
         pygame.init()
         screen = pygame.display.set_mode((WIDTH, HEIGHT))
-        pygame.display.set_caption("Double Pendulum Map (OpenCL)")
+        pygame.display.set_caption("Pendulum Map")
         clock = pygame.time.Clock()
-
 
     if args.anim and not args.folder:
         print("Error: --folder argument is required for animation.")
-    
         return
                 
     total_render_time = 0
     render_time_history = []
 
+    # Initialize params dictionary
+    params = {}
+    
+    # Process generic --param arguments
+    if args.param:
+        for param_name, param_value in args.param:
+            try:
+                # Try converting to float first, then int
+                if '.' in param_value:
+                    params[param_name] = float(param_value)
+                else:
+                    params[param_name] = int(param_value)
+            except ValueError:
+                print(f"Warning: Could not parse parameter '{param_name}' with value '{param_value}'. Keeping as string.")
+                params[param_name] = param_value
 
-    params = {
-    'L1': args.l1,
-    'L2': args.l2,
-    'M1': args.m1,
-    'M2': args.m2,
-    'G': args.g,
-    'DT': args.dt,
-    'MAX_ITER': args.iter,
-    'current_view': (x_min, x_max, y_min, y_max)  # Добавляем начальный вид
-    }
 
-    mapper = DPMapper(
+    mapper = CLMapper(
         width=WIDTH,
         height=HEIGHT,
         kernel_file=args.kernel,
-        params=params.copy()  # Гарантируем копию, а не ссылку
+        params=params.copy() 
     )
+    
     mapper.set_median_filter_size(args.median)
     mapper.set_invert(args.invert)
 
-    target_vx_min, target_vx_max, target_vy_min, target_vy_max = x_min, x_max, y_min, y_max
-    # mapper.set_current_view(x_min, x_max, y_min, y_max)
+    # Determine initial view
+    # Start with kernel defaults if available and not overridden by cmd line
+    if args.backend == "opencl" and mapper.default_view_from_kernel:
+        x_min = mapper.default_view_from_kernel.get('x_min', -math.pi)
+        x_max = mapper.default_view_from_kernel.get('x_max', math.pi)
+        y_min = mapper.default_view_from_kernel.get('y_min', -math.pi)
+        y_max = mapper.default_view_from_kernel.get('y_max', math.pi)
+    else: # Fallback to traditional defaults
+        ratio = WIDTH / HEIGHT
+        modx = 1.78 # Standard 16:9 ratio adjustment
+        mody = modx * (HEIGHT / WIDTH) # Maintain aspect ratio
+        x_min = -math.pi * modx
+        x_max = math.pi * modx
+        y_min = -math.pi * mody
+        y_max = math.pi * mody
     
-    # Use the backend selection function to create the appropriate mapper
-    
-    
-    setup_frame_saving() # Создаем папку для кадров при запуске
+    # Override with command line arguments if provided
+    if args.min_x is not None:
+        x_min = args.min_x
+    if args.max_x is not None:
+        x_max = args.max_x
+    if args.min_y is not None:
+        y_min = args.min_y
+    if args.max_y is not None:
+        y_max = args.max_y
 
-    # Для анимации изменения параметров
+    mapper.set_current_view(x_min, x_max, y_min, y_max)
+    target_vx_min, target_vx_max, target_vy_min, target_vy_max = x_min, x_max, y_min, y_max # For animation logic
+
+
+    setup_frame_saving() 
+
     current_normalized_data = None 
     
+    # Parameters for keyboard control
+    # Get a sorted list of parameter names for consistent indexing
+    keyboard_controllable_params = sorted([k for k in mapper.params.keys() if k not in ['current_view']])
 
+    selected_param_index = 0
+    param_step_size = 0.1
+    param_iter_step_size = 100 # For integer parameters like MAX_ITERATIONS
 
-    if(frame_counter == 0):
-        # Первоначальный расчет и отрисовка
+    if frame_counter == 0:
         print("Performing initial calculation...")
-        
         if not args.skipcalc:           
-
-            # Обновляем целевой вид для следующего приближения
             new_target = (x_min, x_max, y_min, y_max)
             view_width_deg = math.degrees(x_max - x_min)
             mapper.set_current_view(*new_target)
@@ -276,81 +215,54 @@ def main():
             if not args.anim:
                 mapper.add_keyframe(args.pfile, view_width_deg)
 
-
             if args.anim:
                 save_to_file(rgb_data)
                 frame_counter += 1
             else:
                 mapper.init_point_file(args.pfile)
                 current_surface = create_surface_from_normalized_data(rgb_data)
-
-
-      
-  
-
- 
-
-
+        else:
+             # Create a dummy surface if calculation is skipped and not in animation mode
+            if not args.anim:
+                current_surface = pygame.Surface((WIDTH, HEIGHT))
+                current_surface.fill((100, 100, 100)) # Grey background
+            frame_counter += 1 # Increment even if skipped for consistency in animation start
 
     if args.anim:
-
         if args.pfile != "":
-            # Сохраняем начальные параметры ДО загрузки файла
-            initial_params = {
-                'L1': L1,
-                'L2': L2,
-                'M1': M1,
-                'M2': M2,
-                'G': G,
-                'DT': DT,
-                'MAX_ITER': ITER
-            }
+            initial_params = mapper.params.copy() # Capture current params before loading
             
-
-            # Загружаем параметры ИЗ ФАЙЛА в маппер
+            # Load state might update mapper.params and keyframes
             mapper, coords = Mapper.load_state(args.pfile, existing_mapper=mapper)
             
-
-            # Получаем целевые параметры ИЗ ЗАГРУЖЕННОГО СОСТОЯНИЯ
-            target_params = mapper.params.copy()
+            target_params = mapper.params.copy() # Params after loading
             
-            print(coords)
-
-            # Добавляем комбинированную анимацию
             animation_queue.append({
                 'type': 'keyframe',
-                'start_view': (x_min, x_max, y_min, y_max),  # Начальный вид
-                'target_view': coords,                        # Вид из файла
-                'start_params': initial_params,               # Параметры до загрузки
-                'target_params': target_params,               # Параметры из файла
+                'start_view': (x_min, x_max, y_min, y_max),  # This should be the view at frame 0
+                'target_view': coords,                        # Target view from file
+                'start_params': initial_params,               # Params before loading
+                'target_params': target_params,               # Params after loading
                 'step': frame_counter,
                 'total_steps': args.frames
             })
-
         
-
     total_time = time.time()
     rendered_frames = 0
     running = True
-    view_history = [mapper.get_current_view()]  # Инициализируем стек первым видом
+    view_history = [mapper.get_current_view()]  # Initialize stack with the first view
     while running:
-
-        # --- Логика обновления и анимации ---
         if animation_queue:
             anim = animation_queue[0]
-
             
             anim['step'] += 1
             t = anim['step'] / anim['total_steps']
           
             if anim['type'] == 'zoom':
- 
-                # Начальные и целевые границы
                 if anim['target_view']:
                     target_vx_min, target_vx_max, target_vy_min, target_vy_max = anim['target_view']
                     interp_x_min, interp_x_max, interp_y_min, interp_y_max = mapper.interpolate_zoom(anim)
                     mapper.set_current_view(interp_x_min, interp_x_max, interp_y_min, interp_y_max)   
-
 
             if anim['type'] == 'keyframe':
                 target_vx_min, target_vx_max, target_vy_min, target_vy_max = anim['target_view']
@@ -358,70 +270,69 @@ def main():
                 
                 current_width = math.degrees(interp_x_max - interp_x_min)
                 
-                # Сортируем ключевые кадры по возрастанию target_view_width
                 sorted_keyframes = sorted(mapper.keyframes, key=lambda k: k['target_view_width'])
                 
-                # Находим граничные индексы
                 left_idx, right_idx = 0, 0
-                for i in range(len(sorted_keyframes)-1):
-                    if sorted_keyframes[i]['target_view_width'] <= current_width <= sorted_keyframes[i+1]['target_view_width']:
-                        left_idx = i
-                        right_idx = i + 1
-                        break
-                else:
-                    if current_width <= sorted_keyframes[0]['target_view_width']:
-                        left_idx = right_idx = 0
-                    else:
-                        left_idx = right_idx = len(sorted_keyframes)-1
+                # Find the two keyframes that bracket the current view width
+                found_bracket = False
+                if len(sorted_keyframes) > 1:
+                    for i in range(len(sorted_keyframes)-1):
+                        if sorted_keyframes[i]['target_view_width'] <= current_width <= sorted_keyframes[i+1]['target_view_width']:
+                            left_idx = i
+                            right_idx = i + 1
+                            found_bracket = True
+                            break
+                    if not found_bracket: # If current_width is outside the range of keyframes
+                        if current_width < sorted_keyframes[0]['target_view_width']:
+                            left_idx = right_idx = 0
+                        else: # current_width > sorted_keyframes[-1]['target_view_width']
+                            left_idx = right_idx = len(sorted_keyframes) - 1
+                elif len(sorted_keyframes) == 1:
+                    left_idx = right_idx = 0
+                else: # No keyframes, use initial params
+                    # Handle case with no keyframes gracefully, perhaps use current parameters
+                    mapper.set_current_view(interp_x_min, interp_x_max, interp_y_min, interp_y_max)
+                    # No parameter interpolation if no keyframes
+                    if anim['step'] >= anim['total_steps']:
+                        animation_queue.pop(0)
+                    continue
 
                 left_kf = sorted_keyframes[left_idx]
                 right_kf = sorted_keyframes[right_idx]
                 
-                # Корректный расчет коэффициента интерполяции
+                # Correct interpolation factor
                 width_range = right_kf['target_view_width'] - left_kf['target_view_width']
                 if width_range == 0:
                     local_t = 0.0
                 else:
                     local_t = (current_width - left_kf['target_view_width']) / width_range
                 
-                # Интерполяция параметров
-                for param in ['L1', 'L2', 'M1', 'M2', 'G', 'DT', 'MAX_ITER']:
-                    if param in left_kf['params'] and param in right_kf['params']:
-                        start_val = left_kf['params'][param]
-                        end_val = right_kf['params'][param]
+                # Interpolate parameters
+                for param_name in mapper.param_order: # Iterate through recognized params
+                    if param_name in left_kf['params'] and param_name in right_kf['params']:
+                        start_val = left_kf['params'][param_name]
+                        end_val = right_kf['params'][param_name]
                         
-                        if param == 'MAX_ITER':
-                            mapper.params[param] = int(start_val + (end_val - start_val) * local_t)
-                        else:
-                            mapper.params[param] = start_val + (end_val - start_val) * local_t
+                        if isinstance(start_val, int): # Handle int parameters
+                            mapper.params[param_name] = int(start_val + (end_val - start_val) * local_t)
+                        else: # Assume float otherwise
+                            mapper.params[param_name] = start_val + (end_val - start_val) * local_t
                         
-                        print (param, "->",mapper.params[param])
+                        # print (param_name, "->",mapper.params[param_name]) # Debug print
                             
                 mapper.set_current_view(interp_x_min, interp_x_max, interp_y_min, interp_y_max)
 
-
-
-            
-
-
-
-
-            # Завершение анимации
+            # End animation
             if anim['step'] >= anim['total_steps']:
                 mapper.set_current_view(target_vx_min, target_vx_max, target_vy_min, target_vy_max)
                 animation_queue.pop(0)
-
-
         
             start_time = time.time()
             if not args.skipcalc:
                 rgb_data = mapper.calc_and_get_rgb_data()
 
-
-
-                if  args.anim:
+                if args.anim:
                     save_to_file(rgb_data)
-                
                     frame_counter += 1
                 else:
                     current_surface = create_surface_from_normalized_data(rgb_data)
@@ -430,8 +341,6 @@ def main():
             
             end_time = time.time()
 
-
-
             elapsed_time = end_time - start_time
             render_time_history.append(elapsed_time)
             total_render_time += elapsed_time
@@ -439,7 +348,6 @@ def main():
             avg_frame_time = total_render_time / len(render_time_history)
             remaining_frames = anim['total_steps'] - anim['step']
 
-            # Расчет общего времени в секундах и преобразование
             total_seconds = avg_frame_time * remaining_frames
             hours = int(total_seconds // 3600)
             minutes = int((total_seconds % 3600) // 60)
@@ -447,16 +355,14 @@ def main():
             estimated_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
             progress_percent = (anim['step'] / anim['total_steps']) * 100
-            frames_per_second = (1.0 / avg_frame_time)*60 if avg_frame_time > 0 else 0
+            frames_per_second = (1.0 / avg_frame_time)*60 if avg_frame_time > 0 else 0 # frames per minute if multiplied by 60
             
+            viewing_degree_angle = math.degrees(mapper.get_current_view()[1]-mapper.get_current_view()[0])
             
-            viewing_degree_angle = math.degrees(interp_x_max-interp_x_min)
-            
-            
-            timestamp = frame_counter/30
+            timestamp = frame_counter/30 # Assuming 30 FPS for timestamp display
 
             print(f"Done {(frame_counter-1):05d}/{anim['total_steps']}\t"
-                f"{viewing_degree_angle}° @ TS {timestamp:.3f}s\t"
+                f"{viewing_degree_angle:.2f}° @ TS {timestamp:.3f}s\t"
                 f"rendered {elapsed_time:.3f}s @ "
                 f"{frames_per_second:.2f}fpm\t"
                 f"estimated {estimated_time_str} "
@@ -466,151 +372,92 @@ def main():
             rendered_frames +=1
 
         elif args.anim and frame_counter > 0:
-            # Если анимация завершена, выходим из цикла
             running = False
-
         
-
-
         if not args.anim:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
                 if event.type == pygame.KEYDOWN:
-
-
-                    step = 0.1
-                    iter_step = 100
-                    # Получаем текущие параметры из маппера
-                    params = mapper.params
-                    
-                    # Длины
-                    if event.key == pygame.K_UP:
-                        params['L1'] += step
+                    # Generic parameter control (up to 9 parameters)
+                    if pygame.K_1 <= event.key <= pygame.K_9:
+                        idx = event.key - pygame.K_1
+                        if idx < len(keyboard_controllable_params):
+                            selected_param_index = idx
+                            print(f"Selected parameter for adjustment: {keyboard_controllable_params[selected_param_index]} (Index: {selected_param_index + 1})")
+                        else:
+                            print("No parameter mapped to this key.")
+                    elif event.key == pygame.K_UP:
+                        if keyboard_controllable_params:
+                            param_name = keyboard_controllable_params[selected_param_index]
+                            if isinstance(mapper.params[param_name], int):
+                                mapper.params[param_name] += param_iter_step_size
+                            elif isinstance(mapper.params[param_name], float):
+                                mapper.params[param_name] += param_step_size
+                            print(f"Increased {param_name} to {mapper.params[param_name]}")
+                            rgb_data = mapper.calc_and_get_rgb_data()
+                            current_surface = create_surface_from_normalized_data(rgb_data)
                     elif event.key == pygame.K_DOWN:
-                        params['L1'] -= step
-                    elif event.key == pygame.K_RIGHT:
-                        params['L2'] += step
-                    elif event.key == pygame.K_LEFT:
-                        params['L2'] -= step
-                        
-                    # Массы
-                    elif event.key == pygame.K_w:
-                        params['M1'] += step
-                    elif event.key == pygame.K_s:
-                        params['M1'] -= step
-                    elif event.key == pygame.K_d:
-                        params['M2'] += step
-                    elif event.key == pygame.K_a:
-                        params['M2'] -= step
-                        
-                    # Гравитация
-                    elif event.key == pygame.K_q:
-                        params['G'] += step
-                    elif event.key == pygame.K_e:
-                        params['G'] -= step
-                        
-                    # Шаг времени
-                    elif event.key == pygame.K_z:
-                        params['DT'] = round(params['DT'] - step, 2)
-                    elif event.key == pygame.K_x:
-                        params['DT'] = round(params['DT'] + step, 2)
-                        
-                    # Итерации
-                    elif event.key == pygame.K_c:
-                        params['MAX_ITER'] += iter_step
-                    elif event.key == pygame.K_v:
-                        params['MAX_ITER'] = max(100, params['MAX_ITER'] - iter_step)
-                    elif event.key == pygame.K_r:
-                        mapper.set_current_view(x_min, x_max, y_min, y_max)
+                        if keyboard_controllable_params:
+                            param_name = keyboard_controllable_params[selected_param_index]
+                            if isinstance(mapper.params[param_name], int):
+                                mapper.params[param_name] = max(1, mapper.params[param_name] - param_iter_step_size) # Prevent going below 1 for iterations
+                            elif isinstance(mapper.params[param_name], float):
+                                mapper.params[param_name] -= param_step_size
+                            print(f"Decreased {param_name} to {mapper.params[param_name]}")
+                            rgb_data = mapper.calc_and_get_rgb_data()
+                            current_surface = create_surface_from_normalized_data(rgb_data)
 
-                                        
-                    # Обновляем и перерисовываем
-                    if event.key in [pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT,
-                                    pygame.K_w, pygame.K_s, pygame.K_a, pygame.K_d,
-                                    pygame.K_q, pygame.K_e, pygame.K_z, pygame.K_x,
-                                    pygame.K_c, pygame.K_v, pygame.K_r]:
-                        
-                        print(f"Updating: {params}")
+                    elif event.key == pygame.K_r: # Reset view
+                        mapper.set_current_view(x_min, x_max, y_min, y_max)
                         rgb_data = mapper.calc_and_get_rgb_data()
                         current_surface = create_surface_from_normalized_data(rgb_data)
-
-
-                        
-
-                
-                        
-
- 
+                        print("View reset.")
 
                 if event.type == pygame.MOUSEBUTTONDOWN:
-                    if event.button == 1: # Левая кнопка мыши
-                        
-                        mx, my = event.pos # Координаты мыши в пикселях окна
-                        
-                    
+                    if event.button == 1: # Left mouse button (zoom in)
+                        mx, my = event.pos 
                         current_x_min, current_x_max, current_y_min, current_y_max = mapper.params['current_view']
                         
-                        # Преобразование пиксельных координат в координаты данных
                         data_x = current_x_min + (mx / WIDTH) * (current_x_max - current_x_min)
                         data_y = current_y_min + (my / HEIGHT) * (current_y_max - current_y_min)
-
                         
                         new_span_x = (current_x_max - current_x_min) * ZOOM_FACTOR
                         new_span_y = (current_y_max - current_y_min) * ZOOM_FACTOR
-
                         
-                        target_x_min = data_x -  new_span_x
-                        target_x_max = data_x +  new_span_x
-                        target_y_min = data_y - new_span_y
-                        target_y_max = data_y +  new_span_y
+                        target_x_min = data_x -  new_span_x / 2 # Center zoom
+                        target_x_max = data_x +  new_span_x / 2
+                        target_y_min = data_y - new_span_y / 2
+                        target_y_max = data_y +  new_span_y / 2
 
-
-
-
-                        view_width = target_x_max-target_x_min
+                        view_width = target_x_max - target_x_min
                         view_width_deg = math.degrees(view_width)
 
                         print("Zooming to ", view_width_deg)
                         mapper.set_current_view(target_x_min, target_x_max, target_y_min, target_y_max)
                         rgb_data = mapper.calc_and_get_rgb_data()
                         current_surface = create_surface_from_normalized_data(rgb_data)       
-
-
-                        # Сохраняем текущий масштаб и параметры
                         
                         mapper.add_keyframe(args.pfile, view_width_deg)
                         
-                        # Сохраняем текущий вид в стек истории только если он отличается от последнего
                         current_view = mapper.get_current_view()
                         if not view_history or current_view != view_history[-1]:
                             view_history.append(current_view)
                         
-                    if event.button == 3:  # Правая кнопка мыши — возврат
+                    if event.button == 3:  # Right mouse button (zoom out / return)
                         if len(view_history) > 1:
-                            # Удаляем текущий вид
                             view_history.pop()
-                            # Берём предпоследний (теперь последний) и возвращаемся к нему
                             prev_view = view_history[-1]
                             mapper.set_current_view(*prev_view)
                             rgb_data = mapper.calc_and_get_rgb_data()
                             current_surface = create_surface_from_normalized_data(rgb_data)
                             print("Returned to previous view:", prev_view)
-
+                        else:
+                            print("No previous view in history.")
                             
-                            
-
-                        
-                        
-
-
-
-
-        if not args.anim:
-          # --- Отрисовка ---
             screen.blit(current_surface, (0, 0))
             pygame.display.flip()
-            clock.tick(60) # Ограничение FPS для отзывчивости интерфейса
+            clock.tick(60) 
     
     if not args.anim:
         pygame.quit()

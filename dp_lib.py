@@ -1,18 +1,10 @@
+# dp_lib.py
 import numpy as np
 import pyopencl as cl
-import os
 import math
-import pathlib
 import re
-from PIL import Image
-import ctypes
 from scipy.ndimage import median_filter
-
 import json
-
-
-
-
 
 
 class Mapper:
@@ -247,9 +239,7 @@ class Mapper:
 
 
 
-
-
-class DPMapper(Mapper):
+class CLMapper(Mapper):
     def __init__(self, width, height, kernel_file, params=None):
         super().__init__(width, height, params)
         self.ctx = cl.create_some_context()
@@ -257,54 +247,150 @@ class DPMapper(Mapper):
         
         with open(kernel_file, "r") as f:
             kernel_code = f.read()
+        
+        self.params = params.copy() if params else {}
+        self.param_order = []
+        self.kernel_function_name = 'simulate' # Default kernel function name
+        self.default_view_from_kernel = {} # Store default view from kernel comments
+        self._parse_kernel_parameters(kernel_code)
+        self._parse_kernel_function_name(kernel_code)
+        self._parse_kernel_view_defaults(kernel_code)
+        
         self.prg = cl.Program(self.ctx, kernel_code).build()
         
         self.num_points = width * height
         self.raw_results_np = np.empty(self.num_points, dtype=np.int32)
         self.mf = cl.mem_flags
         self.output_buf = cl.Buffer(self.ctx, self.mf.WRITE_ONLY, self.raw_results_np.nbytes)
-        self.input_theta1_np = np.empty(self.num_points, dtype=np.double)
-        self.input_theta2_np = np.empty(self.num_points, dtype=np.double)
-        self.params = params or {}
+        self.input_xs_np = np.empty(self.num_points, dtype=np.double) # Renamed
+        self.input_ys_np = np.empty(self.num_points, dtype=np.double) # Renamed
+
+    def _parse_kernel_parameters(self, kernel_code):
+        param_pattern = re.compile(r'//\s*PARAM:\s*(\w+)\s+(\w+)\s+([\d\.\-]+)') # Handles negative defaults
+        self.param_order = []
+        for line in kernel_code.split('\n'):
+            line = line.strip()
+            if line.startswith('// PARAM:'):
+                match = param_pattern.match(line)
+                if match:
+                    name, type_str, default_str = match.groups()
+                    # Skip width and height as they are passed separately
+                    if name in ['width', 'height']:
+                        continue 
+                    
+                    if name not in self.params: # Only set if not already set by dp_map.py args
+                        if type_str == 'double':
+                            default = float(default_str)
+                        elif type_str == 'int':
+                            default = int(default_str)
+                        else:
+                            continue  # Unsupported type
+                        self.params[name] = default
+                    self.param_order.append(name)
+        # Ensure required parameters are present
+        if 'DT' not in self.params:
+            self.params['DT'] = 0.2
+        if 'MAX_ITERATIONS' not in self.params: # Renamed from MAX_ITER
+            self.params['MAX_ITERATIONS'] = 5000
+        
+        # Ensure DT and MAX_ITERATIONS are in the param_order if they weren't explicitly in comments
+        if 'DT' not in self.param_order:
+            self.param_order.append('DT')
+        if 'MAX_ITERATIONS' not in self.param_order:
+            self.param_order.append('MAX_ITERATIONS')
+
+
+    def _parse_kernel_function_name(self, kernel_code):
+        func_pattern = re.compile(r'//\s*KERNEL_FUNCTION:\s*(\w+)')
+        match = func_pattern.search(kernel_code)
+        if match:
+            self.kernel_function_name = match.group(1)
+
+    def _parse_kernel_view_defaults(self, kernel_code):
+        view_pattern = re.compile(r'//\s*VIEW_DEFAULT:\s*(x_min|x_max|y_min|y_max)\s+([\d\.\-]+)')
+        for line in kernel_code.split('\n'):
+            line = line.strip()
+            if line.startswith('// VIEW_DEFAULT:'):
+                match = view_pattern.match(line)
+                if match:
+                    key, value_str = match.groups()
+                    self.default_view_from_kernel[key] = float(value_str)
+
+        # --- Корректировка под соотношение сторон ---
+        # Корректируем только если все 4 параметра считаны и известны размеры
+        if all(k in self.default_view_from_kernel for k in ('x_min', 'x_max', 'y_min', 'y_max')):
+            x_min = self.default_view_from_kernel['x_min']
+            x_max = self.default_view_from_kernel['x_max']
+            y_min = self.default_view_from_kernel['y_min']
+            y_max = self.default_view_from_kernel['y_max']
+            span_x = x_max - x_min
+            span_y = y_max - y_min
+
+            # Получаем размеры из self.width/self.height, если они есть
+            width = getattr(self, 'width', None)
+            height = getattr(self, 'height', None)
+            if width is not None and height is not None:
+                aspect_kernel = span_x / span_y
+                aspect_target = width / height
+
+                if aspect_kernel < aspect_target:
+                    # Нужно увеличить span_x
+                    new_span_x = span_y * aspect_target
+                    center_x = (x_min + x_max) / 2
+                    x_min = center_x - new_span_x / 2
+                    x_max = center_x + new_span_x / 2
+                elif aspect_kernel > aspect_target:
+                    # Нужно увеличить span_y
+                    new_span_y = span_x / aspect_target
+                    center_y = (y_min + y_max) / 2
+                    y_min = center_y - new_span_y / 2
+                    y_max = center_y + new_span_y / 2
+
+                self.default_view_from_kernel['x_min'] = x_min
+                self.default_view_from_kernel['x_max'] = x_max
+                self.default_view_from_kernel['y_min'] = y_min
+                self.default_view_from_kernel['y_max'] = y_max
 
     def get_kernel_params(self):
-        return (
-            np.double(self.params.get('L1', 1.0)),
-            np.double(self.params.get('L2', 1.0)),
-            np.double(self.params.get('M1', 1.0)),
-            np.double(self.params.get('M2', 1.0)),
-            np.double(self.params.get('G', 9.81)),            
-            np.double(self.params.get('DT', 0.2)),
-            np.int32(self.params.get('MAX_ITER', 5000)),
-            np.int32(self.width),
-            np.int32(self.height)
-        )
+        params = []
+        for name in self.param_order:
+            value = self.params.get(name) # Use .get() in case a param is in order but not in self.params (shouldn't happen with current logic)
+            if isinstance(value, float):
+                params.append(np.double(value))
+            elif isinstance(value, int):
+                params.append(np.int32(value))
+            else:
+                params.append(value) # Fallback for other types, though not expected
+        
+        # Always append width and height last, as they are hardcoded in kernel signature
+        params.append(np.int32(self.width))
+        params.append(np.int32(self.height))
+        return tuple(params)
 
     def compute_map(self):
         x_min, x_max, y_min, y_max = self.params['current_view']
-        theta1_vals = np.linspace(x_min, x_max, self.width, dtype=np.double)
-        theta2_vals = np.linspace(y_min, y_max, self.height, dtype=np.double)
+        # initial_xs and initial_ys are used for the kernel arguments
+        xs_vals = np.linspace(x_min, x_max, self.width, dtype=np.double)
+        ys_vals = np.linspace(y_min, y_max, self.height, dtype=np.double)
 
         for r_idx in range(self.height):
             for c_idx in range(self.width):
                 idx = r_idx * self.width + c_idx
-                self.input_theta1_np[idx] = theta1_vals[c_idx]
-                self.input_theta2_np[idx] = theta2_vals[r_idx]
+                self.input_xs_np[idx] = xs_vals[c_idx]
+                self.input_ys_np[idx] = ys_vals[r_idx]
 
-        input_theta1_buf = cl.Buffer(self.ctx, self.mf.READ_ONLY | self.mf.COPY_HOST_PTR, hostbuf=self.input_theta1_np)
-        input_theta2_buf = cl.Buffer(self.ctx, self.mf.READ_ONLY | self.mf.COPY_HOST_PTR, hostbuf=self.input_theta2_np)
+        input_xs_buf = cl.Buffer(self.ctx, self.mf.READ_ONLY | self.mf.COPY_HOST_PTR, hostbuf=self.input_xs_np)
+        input_ys_buf = cl.Buffer(self.ctx, self.mf.READ_ONLY | self.mf.COPY_HOST_PTR, hostbuf=self.input_ys_np)
 
         kernel_args = (
-            input_theta1_buf, input_theta2_buf, self.output_buf,
+            input_xs_buf,
+            input_ys_buf,
+            self.output_buf,
             *self.get_kernel_params()
         )
         
-        global_size = (self.height, self.width)
-        self.prg.simulate_pendulum(self.queue, global_size, None, *kernel_args).wait()
+        global_size = (self.height, self.width) # PyOpenCL expects (rows, cols) for 2D
+        kernel_func = getattr(self.prg, self.kernel_function_name)
+        kernel_func(self.queue, global_size, None, *kernel_args).wait()
         cl.enqueue_copy(self.queue, self.raw_results_np, self.output_buf).wait()
         return self.raw_results_np.copy()
-
-
-
-
-
