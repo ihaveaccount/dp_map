@@ -419,7 +419,7 @@ def main():
                         view_width = target_x_max - target_x_min
                         view_width_deg = math.degrees(view_width)
 
-                        print("Zooming to ", view_width_deg)
+                        print("Zooming to ", view_width_deg, "view", (target_x_min, target_x_max, target_y_min, target_y_max) )
                         mapper.set_current_view(target_x_min, target_x_max, target_y_min, target_y_max)
                         rgb_data = mapper.calc_and_get_rgb_data()
                         current_surface = create_surface_from_normalized_data(rgb_data)       

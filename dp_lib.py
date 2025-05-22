@@ -12,9 +12,10 @@ class Mapper:
         self.width = width
         self.height = height
         self.params = params or {}
-        self.raw_data = None
-        self.normalized_data = None
+        self.raw_data = {} # Changed to dictionary to store multiple raw channels
+        self.normalized_data = {} # Changed to dictionary for multiple normalized channels
         self.keyframes = []  # New field for storing keyframes
+        self.output_channels = ['brightness'] # Default output channel, can be 'R', 'G', 'B', 'H', 'S', 'V'
         
     @staticmethod
     
@@ -100,27 +101,38 @@ class Mapper:
     def compute_map(self, x_min, x_max, y_min, y_max):
         raise NotImplementedError
 
-    def normalize_data(self, raw_data):
-        self.raw_data = self.compute_map()
-        """ Normalizes raw data (logarithm + min-max scaling to 0-255). """
-        # Apply natural logarithm (log1p for zeros: log(1+x))
-        log_data = np.log1p(self.raw_data.astype(np.float64))
+    def normalize_data(self): # Modified to take no arguments, uses self.raw_data
+        """ Normalizes raw data (logarithm + min-max scaling to 0-255) for each channel. """
+        for channel_name, raw_channel_data in self.raw_data.items():
+            # Apply natural logarithm (log1p for zeros: log(1+x))
+            log_data = np.log1p(raw_channel_data.astype(np.float64))
 
-        min_log_val = np.min(log_data)
-        max_log_val = np.max(log_data)
-        
-        if max_log_val == min_log_val: # If all values are the same
-            normalized_data = np.zeros_like(log_data, dtype=np.uint8)
-        else:
-            normalized_data = 255 * (log_data - min_log_val) / (max_log_val - min_log_val)
-        
-        normalized_data = np.clip(normalized_data, 0, 255).astype(np.uint8)
-        
-        self.normalized_data = normalized_data.reshape((self.height, self.width))
+            min_log_val = np.min(log_data)
+            max_log_val = np.max(log_data)
+            
+            if max_log_val == min_log_val: # If all values are the same
+                normalized_channel_data = np.zeros_like(log_data, dtype=np.uint8)
+            else:
+                normalized_channel_data = 255 * (log_data - min_log_val) / (max_log_val - min_log_val)
+            
+            self.normalized_data[channel_name] = np.clip(normalized_channel_data, 0, 255).astype(np.uint8)
+
+
+        # ... (inside the loop for each channel)
+        self.normalized_data[channel_name] = np.clip(normalized_channel_data, 0, 255).astype(np.uint8)
+        # Debugging: Print some statistics of the normalized data
+        # print(f"Normalized data for {channel_name}: min={np.min(self.normalized_data[channel_name])}, max={np.max(self.normalized_data[channel_name])}, mean={np.mean(self.normalized_data[channel_name])}")
+        # print(f"Normalized data (first 10 elements): {self.normalized_data[channel_name][:10]}")
+        return self.normalized_data         
+
         return self.normalized_data
 
-    
+    def set_output_channels(self, channels):
+        """Sets the names of the output channels the kernel will produce (e.g., ['H', 'S', 'B'] or ['R', 'G', 'B'])."""
+        self.output_channels = channels
 
+    def get_output_channels(self):
+        return self.output_channels
 
     def add_keyframe(self, filename, view_width_deg):
         """Adds a keyframe only if parameters change and updates target_view"""
@@ -181,30 +193,75 @@ class Mapper:
 
     def calc_and_get_rgb_data(self):
         self.compute_map()
-        self.normalize_data(self.raw_data)
-        """Generates RGB data from normalized 2D data with preprocessing"""
-        img_data = self.normalized_data.copy()
-        
+        self.normalize_data()  # Call without arguments
+
         median_size = self.get_median_filter_size()
-        
-        if median_size and median_size > 0:
-            img_data = median_filter(img_data, size=median_size)        
-        # Normalize and convert to uint8
-        if img_data.max() <= 1.0:
-            img_data = (img_data * 255).astype(np.uint8)
+
+        if set(self.output_channels) == {'H', 'S', 'B'}:
+            # Apply median filter to each channel if needed
+            hue_data = self.normalized_data['H'].reshape((self.height, self.width))
+            saturation_data = self.normalized_data['S'].reshape((self.height, self.width))
+            brightness_data = self.normalized_data['B'].reshape((self.height, self.width))
+            if median_size and median_size > 0:
+                hue_data = median_filter(hue_data, size=median_size)
+                saturation_data = median_filter(saturation_data, size=median_size)
+                brightness_data = median_filter(brightness_data, size=median_size)
+            hue_data = hue_data.astype(float) / 255.0
+            saturation_data = saturation_data.astype(float) / 255.0
+            brightness_data = brightness_data.astype(float) / 255.0
+
+            rgb_data = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+            for r_idx in range(self.height):
+                for c_idx in range(self.width):
+                    h = hue_data[r_idx, c_idx]
+                    s = saturation_data[r_idx, c_idx]
+                    v = brightness_data[r_idx, c_idx]
+                    i = math.floor(h * 6)
+                    f = h * 6 - i
+                    p = v * (1 - s)
+                    q = v * (1 - f * s)
+                    t = v * (1 - (1 - f) * s)
+                    r, g, b = 0, 0, 0
+                    if i % 6 == 0: r, g, b = v, t, p
+                    elif i % 6 == 1: r, g, b = q, v, p
+                    elif i % 6 == 2: r, g, b = p, v, t
+                    elif i % 6 == 3: r, g, b = p, q, v
+                    elif i % 6 == 4: r, g, b = t, p, v
+                    elif i % 6 == 5: r, g, b = v, p, q
+                    rgb_data[r_idx, c_idx, 0] = int(r * 255)
+                    rgb_data[r_idx, c_idx, 1] = int(g * 255)
+                    rgb_data[r_idx, c_idx, 2] = int(b * 255)
+
+        elif set(self.output_channels) == {'R', 'G', 'B'}:
+            # Apply median filter to each channel if needed
+            r_data = self.normalized_data['R'].reshape((self.height, self.width))
+            g_data = self.normalized_data['G'].reshape((self.height, self.width))
+            b_data = self.normalized_data['B'].reshape((self.height, self.width))
+            if median_size and median_size > 0:
+                r_data = median_filter(r_data, size=median_size)
+                g_data = median_filter(g_data, size=median_size)
+                b_data = median_filter(b_data, size=median_size)
+            rgb_data = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+            rgb_data[:, :, 0] = r_data
+            rgb_data[:, :, 1] = g_data
+            rgb_data[:, :, 2] = b_data
+
+        elif 'brightness' in self.output_channels:
+            img_data = self.normalized_data['brightness'].copy()
+            if median_size and median_size > 0:
+                img_data = median_filter(img_data, size=median_size)
+            if img_data.max() <= 1.0:
+                img_data = (img_data * 255).astype(np.uint8)
+            else:
+                img_data = img_data.astype(np.uint8)
+            if self.get_invert():
+                img_data = 255 - img_data
+            height, width = img_data.shape
+            rgb_data = np.zeros((height, width, 3), dtype=np.uint8)
+            rgb_data[:, :, :] = img_data[..., np.newaxis]
         else:
-            img_data = img_data.astype(np.uint8)
-        
+            raise ValueError("Unsupported output channel configuration.")
 
-        # Inversion, if required
-        if self.get_invert():
-            img_data = 255 - img_data
-
-        # Create 3-channel image
-        height, width = img_data.shape
-        rgb_data = np.zeros((height, width, 3), dtype=np.uint8)
-        rgb_data[:, :, :] = img_data[..., np.newaxis]  # Copy data to all 3 channels
-        
         return rgb_data
 
     def init_point_file(self, filename):
@@ -254,13 +311,19 @@ class CLMapper(Mapper):
         self.default_view_from_kernel = {} # Store default view from kernel comments
         self._parse_kernel_parameters(kernel_code)
         self._parse_kernel_view_defaults(kernel_code)
+        self._parse_kernel_output_channels(kernel_code) # New: parse output channels
         
         self.prg = cl.Program(self.ctx, kernel_code).build()
         
         self.num_points = width * height
-        self.raw_results_np = np.empty(self.num_points, dtype=np.int32)
+        
+        # Changed: Multiple output buffers based on parsed output_channels
+        self.output_bufs = {}
+        for channel_name in self.output_channels:
+            self.output_bufs[channel_name] = cl.Buffer(self.ctx, cl.mem_flags.WRITE_ONLY, np.empty(self.num_points, dtype=np.float32).nbytes) # Use float32 for output
+            self.raw_data[channel_name] = np.empty(self.num_points, dtype=np.float32) # Store raw data for each channel
+
         self.mf = cl.mem_flags
-        self.output_buf = cl.Buffer(self.ctx, self.mf.WRITE_ONLY, self.raw_results_np.nbytes)
         self.input_xs_np = np.empty(self.num_points, dtype=np.double) # Renamed
         self.input_ys_np = np.empty(self.num_points, dtype=np.double) # Renamed
 
@@ -275,7 +338,7 @@ class CLMapper(Mapper):
                     name, type_str, default_str = match.groups()
                     # Skip width and height as they are passed separately
                     if name in ['width', 'height']:
-                        continue 
+                        continue
                     
                     if name not in self.params: # Only set if not already set by dp_map.py args
                         if type_str == 'double':
@@ -337,6 +400,19 @@ class CLMapper(Mapper):
                 
                 self.params['current_view'] = (x_min, x_max, y_min, y_max)
 
+    def _parse_kernel_output_channels(self, kernel_code):
+        output_pattern = re.compile(r'//\s*OUTPUT_CHANNELS:\s*(\w+(?:,\s*\w+)*)')
+        for line in kernel_code.split('\n'):
+            line = line.strip()
+            if line.startswith('// OUTPUT_CHANNELS:'):
+                match = output_pattern.match(line)
+                if match:
+                    channels_str = match.groups()[0]
+                    self.set_output_channels([c.strip() for c in channels_str.split(',')])
+                    return
+        # If no OUTPUT_CHANNELS comment, default to 'brightness'
+        self.set_output_channels(['brightness'])
+
     def get_kernel_params(self):
         params = []
         for name in self.param_order:
@@ -368,17 +444,33 @@ class CLMapper(Mapper):
         input_xs_buf = cl.Buffer(self.ctx, self.mf.READ_ONLY | self.mf.COPY_HOST_PTR, hostbuf=self.input_xs_np)
         input_ys_buf = cl.Buffer(self.ctx, self.mf.READ_ONLY | self.mf.COPY_HOST_PTR, hostbuf=self.input_ys_np)
 
-        kernel_args = (
+        kernel_args = [
             input_xs_buf,
             input_ys_buf,
-            self.output_buf,
-            *self.get_kernel_params()
-        )
+        ]
+        # Add output buffers dynamically
+        for channel_name in self.output_channels:
+            kernel_args.append(self.output_bufs[channel_name])
+            
+        kernel_args.extend(self.get_kernel_params())
         
         # print("kernel_args types:", [type(a) for a in kernel_args])
         
         global_size = (self.height, self.width) # PyOpenCL expects (rows, cols) for 2D
         kernel_func = getattr(self.prg, self.kernel_function_name)
         kernel_func(self.queue, global_size, None, *kernel_args).wait()
-        cl.enqueue_copy(self.queue, self.raw_results_np, self.output_buf).wait()
-        return self.raw_results_np.copy()
+        
+        # Enqueue copy for each output channel
+        for channel_name in self.output_channels:
+            cl.enqueue_copy(self.queue, self.raw_data[channel_name], self.output_bufs[channel_name]).wait()
+            
+
+        # ... (after cl.enqueue_copy for all channels)
+        # for channel_name in self.output_channels:
+        #     cl.enqueue_copy(self.queue, self.raw_data[channel_name], self.output_bufs[channel_name]).wait()
+        #     # Debugging: Print some statistics of the raw data
+        #     print(f"Raw data for {channel_name}: min={np.min(self.raw_data[channel_name])}, max={np.max(self.raw_data[channel_name])}, mean={np.mean(self.raw_data[channel_name])}")
+        #     print(f"Raw data (first 10 elements): {self.raw_data[channel_name][:10]}")
+
+
+        return self.raw_data # Return the dictionary of raw data
