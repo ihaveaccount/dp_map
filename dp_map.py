@@ -189,6 +189,10 @@ def main():
     param_step_size = 0.1
     param_iter_step_size = 100 # For integer parameters like MAX_ITERATIONS
 
+    param_changed = False
+    last_param_change_time = 0
+    RECALC_DELAY = 1.0  # seconds
+
     if frame_counter == 0:
         print("Performing initial calculation...")
         if not args.skipcalc:           
@@ -370,7 +374,8 @@ def main():
                         idx = event.key - pygame.K_1
                         if idx < len(keyboard_controllable_params):
                             selected_param_index = idx
-                            print(f"Selected parameter for adjustment: {keyboard_controllable_params[selected_param_index]} (Index: {selected_param_index + 1})")
+                            param_name = keyboard_controllable_params[selected_param_index]
+                            print(f"Selected parameter for adjustment: {keyboard_controllable_params[selected_param_index]} (Value: {mapper.params[param_name]})")
                         else:
                             print("No parameter mapped to this key.")
                     elif event.key == pygame.K_UP:
@@ -381,8 +386,8 @@ def main():
                             elif isinstance(mapper.params[param_name], float):
                                 mapper.params[param_name] += param_step_size
                             print(f"Increased {param_name} to {mapper.params[param_name]}")
-                            rgb_data = mapper.calc_and_get_rgb_data()
-                            current_surface = create_surface_from_normalized_data(rgb_data)
+                            param_changed = True
+                            last_param_change_time = time.time()
                     elif event.key == pygame.K_DOWN:
                         if keyboard_controllable_params:
                             param_name = keyboard_controllable_params[selected_param_index]
@@ -391,8 +396,8 @@ def main():
                             elif isinstance(mapper.params[param_name], float):
                                 mapper.params[param_name] -= param_step_size
                             print(f"Decreased {param_name} to {mapper.params[param_name]}")
-                            rgb_data = mapper.calc_and_get_rgb_data()
-                            current_surface = create_surface_from_normalized_data(rgb_data)
+                            param_changed = True
+                            last_param_change_time = time.time()
 
                     elif event.key == pygame.K_r: # Reset view
                         mapper.set_current_view(x_min, x_max, y_min, y_max)
@@ -441,6 +446,17 @@ def main():
                         else:
                             print("No previous view in history.")
                             
+            if param_changed and (time.time() - last_param_change_time) >= RECALC_DELAY:
+                
+                print("Params recalculation...")
+                timer = time.time()
+                rgb_data = mapper.calc_and_get_rgb_data()
+                current_surface = create_surface_from_normalized_data(rgb_data)
+                param_changed = False
+                timer = time.time()-timer;
+                print("Done in", timer)
+                
+
             screen.blit(current_surface, (0, 0))
             pygame.display.flip()
             clock.tick(60) 
