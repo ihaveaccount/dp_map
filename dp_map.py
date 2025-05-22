@@ -7,9 +7,9 @@ import math
 import argparse 
 import pathlib
 import re
-
-from dp_lib import CLMapper, Mapper # Import both mappers and base Mapper
 import time
+from dp_lib import CLMapper, Mapper # Import both mappers and base Mapper
+
 from PIL import Image
 
 parser = argparse.ArgumentParser(description='Double Pendulum Simulation')
@@ -43,6 +43,9 @@ parser.add_argument('--invert', action='store_true', help='Invert image (min=255
 # New arguments for generic parameter passing
 parser.add_argument('--param', nargs=2, action='append', metavar=('NAME', 'VALUE'),
                     help='Set a kernel parameter. Use multiple --param NAME VALUE for multiple parameters.')
+
+parser.add_argument('--param_to', nargs=2, action='append', metavar=('NAME', 'VALUE'),
+                    help='Set a target kernel parameter for param_interpolation. Use multiple --param_to NAME VALUE for multiple parameters.')
 
 parser.add_argument('--paranim', action='store_true', 
                     help='Animate parameter interpolation from current to --param values')
@@ -125,6 +128,11 @@ def main():
     
     view_history = []
 
+
+    if args.paranim:
+        args.anim = True
+
+
     if not args.anim:
         pygame.init()
         screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -136,8 +144,7 @@ def main():
         return
     
 
-    if args.paranim:
-        args.anim = True
+
 
                 
     total_render_time = 0
@@ -145,8 +152,10 @@ def main():
 
     # Initialize params dictionary
     params = {}
-    
-    
+ 
+
+        
+
     if args.param:
         for param_name, param_value in args.param:
             try:
@@ -167,10 +176,18 @@ def main():
                 params = params.copy()
             )
 
-        
     mapper.set_median_filter_size(args.median)
     mapper.set_invert(args.invert)
+
+
+
     
+
+
+
+
+
+
     # Override with command line arguments if provided
     if args.min_x is not None:
         x_min = args.min_x
@@ -229,22 +246,43 @@ def main():
             frame_counter += 1 # Increment even if skipped for consistency in animation start
 
     if args.paranim:
-        if not args.param:
-            print("Error: --paranim requires at least one --param to animate.")
+        if not args.param or not args.param_to:
+            print("Error: --paranim requires both --param (start) and --param_to (end) parameters.")
             return
 
-        # Берём дефолтные значения из шейдера (mapper.params после создания, до применения --param)
-        default_params = mapper.get_initial_params()
+        # 1. Получаем дефолтные значения из шейдера
+        default_params = {}
 
-        
+        # 2. Формируем стартовые параметры из --param (поверх дефолтов)
+        start_params = default_params.copy()
+        for param_name, param_value in args.param:
+            try:
+                if '.' in param_value:
+                    start_params[param_name] = float(param_value)
+                else:
+                    start_params[param_name] = int(param_value)
+            except ValueError:
+                start_params[param_name] = param_value
+
+        # 3. Формируем целевые параметры из --param_to (поверх дефолтов)
+        target_params = {}
+        for param_name, param_value in args.param_to:
+            try:
+                if '.' in param_value:
+                    target_params[param_name] = float(param_value)
+                else:
+                    target_params[param_name] = int(param_value)
+            except ValueError:
+                target_params[param_name] = param_value
 
         animation_queue.append({
             'type': 'param_interpolation',
-            'start_params': default_params.copy(),
-            'target_params': mapper.params.copy(),
+            'start_params': start_params.copy(),
+            'target_params': target_params.copy(),
             'step': frame_counter,
             'total_steps': args.frames
         })
+
 
 
     elif args.anim:
@@ -349,6 +387,7 @@ def main():
                 # Интерполируем каждый параметр
                 t = anim['step'] / anim['total_steps']  # Убедимся что t вычисляется правильно
                 t = 0.5 * (1 - math.cos(math.pi * t))
+
                 for param_name in anim['target_params']:
                     
     
@@ -412,11 +451,11 @@ def main():
             progress_percent = (anim['step'] / anim['total_steps']) * 100
             frames_per_second = (1.0 / avg_frame_time)*60 if avg_frame_time > 0 else 0 # frames per minute if multiplied by 60
             
-            viewing_degree_angle = math.degrees(mapper.get_current_view()[1] - mapper.get_current_view()[0])
+            viewing_degree_angle = mapper.get_current_view()[1] - mapper.get_current_view()[0]
             timestamp = frame_counter / 30  # Assuming 30 FPS for timestamp display
             
             print(f"Done {(frame_counter-1):05d}/{anim['total_steps']}\t"
-                  f"{viewing_degree_angle}° @ TS {timestamp:.3f}s\t"
+                  f"{viewing_degree_angle} @ TS {timestamp:.3f}s\t"
                   f"rendered {elapsed_time:.3f}s @ "
                   f"{frames_per_second:.2f}fpm\t"
                   f"estimated {estimated_time_str} "

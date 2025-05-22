@@ -1,14 +1,14 @@
 // attractors_kernel.c
 // PARAM: R double 5.0 // Радиус треугольника
-// PARAM: FORCE double 1.0 // Сила притяжения
+// PARAM: FORCE double 10.0 // Сила притяжения
 // PARAM: DT double 0.01 // Шаг интегрирования
-// PARAM: MAX_ITERATIONS int 3000 // Максимальное число итераций
-// PARAM: EPS double 0.1 // Пороговое расстояние для сходимости
-// PARAM: DAMPING double 0.8 // Затухание скорости
-// VIEW_DEFAULT: x_min -10.0
-// VIEW_DEFAULT: x_max 10.0
-// VIEW_DEFAULT: y_min -10.0
-// VIEW_DEFAULT: y_max 10.0
+// PARAM: MAX_ITERATIONS int 5000 // Максимальное число итераций
+// PARAM: EPS double 0.00001 // Пороговое расстояние для сходимости
+// PARAM: DAMPING double 0.999 // Затухание скорости
+// VIEW_DEFAULT: x_min -100.0
+// VIEW_DEFAULT: x_max 100.0
+// VIEW_DEFAULT: y_min -100.0
+// VIEW_DEFAULT: y_max 100.0
 // OUTPUT_CHANNELS: R, G, B
 
 __kernel void simulate(

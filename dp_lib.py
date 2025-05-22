@@ -3,6 +3,7 @@ import numpy as np
 import pyopencl as cl
 import math
 import re
+import time
 from scipy.ndimage import median_filter
 import json
 
@@ -194,46 +195,17 @@ class Mapper:
 
     def calc_and_get_rgb_data(self):
         self.compute_map()
+
+        timer = time.time()
+
+
         self.normalize_data()  # Call without arguments
 
         median_size = self.get_median_filter_size()
 
-        if set(self.output_channels) == {'H', 'S', 'B'}:
-            # Apply median filter to each channel if needed
-            hue_data = self.normalized_data['H'].reshape((self.height, self.width))
-            saturation_data = self.normalized_data['S'].reshape((self.height, self.width))
-            brightness_data = self.normalized_data['B'].reshape((self.height, self.width))
-            if median_size and median_size > 0:
-                hue_data = median_filter(hue_data, size=median_size)
-                saturation_data = median_filter(saturation_data, size=median_size)
-                brightness_data = median_filter(brightness_data, size=median_size)
-            hue_data = hue_data.astype(float) / 255.0
-            saturation_data = saturation_data.astype(float) / 255.0
-            brightness_data = brightness_data.astype(float) / 255.0
+ 
 
-            rgb_data = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-            for r_idx in range(self.height):
-                for c_idx in range(self.width):
-                    h = hue_data[r_idx, c_idx]
-                    s = saturation_data[r_idx, c_idx]
-                    v = brightness_data[r_idx, c_idx]
-                    i = math.floor(h * 6)
-                    f = h * 6 - i
-                    p = v * (1 - s)
-                    q = v * (1 - f * s)
-                    t = v * (1 - (1 - f) * s)
-                    r, g, b = 0, 0, 0
-                    if i % 6 == 0: r, g, b = v, t, p
-                    elif i % 6 == 1: r, g, b = q, v, p
-                    elif i % 6 == 2: r, g, b = p, v, t
-                    elif i % 6 == 3: r, g, b = p, q, v
-                    elif i % 6 == 4: r, g, b = t, p, v
-                    elif i % 6 == 5: r, g, b = v, p, q
-                    rgb_data[r_idx, c_idx, 0] = int(r * 255)
-                    rgb_data[r_idx, c_idx, 1] = int(g * 255)
-                    rgb_data[r_idx, c_idx, 2] = int(b * 255)
-
-        elif set(self.output_channels) == {'R', 'G', 'B'}:
+        if set(self.output_channels) == {'R', 'G', 'B'}:
             # Apply median filter to each channel if needed
             r_data = self.normalized_data['R'].reshape((self.height, self.width))
             g_data = self.normalized_data['G'].reshape((self.height, self.width))
@@ -242,6 +214,7 @@ class Mapper:
                 r_data = median_filter(r_data, size=median_size)
                 g_data = median_filter(g_data, size=median_size)
                 b_data = median_filter(b_data, size=median_size)
+
             rgb_data = np.zeros((self.height, self.width, 3), dtype=np.uint8)
             rgb_data[:, :, 0] = r_data
             rgb_data[:, :, 1] = g_data
@@ -249,34 +222,39 @@ class Mapper:
 
         elif 'brightness' in self.output_channels:
             img_data = self.normalized_data['brightness'].copy()
-            if median_size and median_size > 0:
-                img_data = median_filter(img_data, size=median_size)
+            
+            
+            
             if img_data.max() <= 1.0:
                 img_data = (img_data * 255).astype(np.uint8)
             else:
                 img_data = img_data.astype(np.uint8)
             if self.get_invert():
                 img_data = 255 - img_data
+            img_data = img_data.reshape((self.height, self.width))  # <-- добавьте эту строку
+
+            if median_size and median_size > 0:
+                img_data = median_filter(img_data, size=median_size)
+
+
             height, width = img_data.shape
             rgb_data = np.zeros((height, width, 3), dtype=np.uint8)
             rgb_data[:, :, :] = img_data[..., np.newaxis]
         else:
             raise ValueError("Unsupported output channel configuration.")
 
+        timer = time.time()-timer
+        
+        if timer > 1.0:
+            print(f"Normalize timer {timer}")
+
         return rgb_data
 
     def init_point_file(self, filename):
         """Creates or overwrites a file with initial parameters and current view"""
+        # Save all kernel parameters except 'current_view'
         state = {
-            "start_params": {
-                "L1": self.params.get('L1', 1.0),
-                "L2": self.params.get('L2', 1.0),
-                "M1": self.params.get('M1', 1.0),
-                "M2": self.params.get('M2', 1.0),
-                "G": self.params.get('G', 9.81),
-                "DT": self.params.get('DT', 0.2),
-                "MAX_ITER": self.params.get('MAX_ITER', 5000),
-            },
+            "start_params": {k: v for k, v in self.params.items() if k != 'current_view'},
             "start_view": list(self.get_current_view())
         }
         with open(filename, 'w') as f:

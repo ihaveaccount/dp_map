@@ -10,7 +10,7 @@
 // VIEW_DEFAULT: x_max 3.141592653589793
 // VIEW_DEFAULT: y_min -3.141592653589793
 // VIEW_DEFAULT: y_max 3.141592653589793
-// OUTPUT_CHANNELS: H, S, B
+// OUTPUT_CHANNELS: brightness
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -19,9 +19,7 @@
 __kernel void simulate(
     __global const double* initial_xs,
     __global const double* initial_ys,
-    __global float* out_H, // Output Hue as float
-    __global float* out_S, // Output Saturation as float
-    __global float* out_B, // Output Brightness as float
+    __global float* out_brightness, 
     const double L1,
     const double L2,
     const double M1,
@@ -100,8 +98,8 @@ __kernel void simulate(
     // Calculate Hue based on th2 (angle of second segment)
     // Map th2 from -PI to PI to 0 to 1 (or 0 to 360 for actual hue)
     // Here we'll map to [0, 1] for easier use with HSB to RGB conversion later
-    float hue = fmod((th2 + M_PI), (2.0 * M_PI)) / (2.0 * M_PI); // Normalize to [0, 1)
-    if (hue < 0.0) hue += 1.0; // Ensure positive
+    // float hue = fmod((th2 + M_PI), (2.0 * M_PI)) / (2.0 * M_PI); // Normalize to [0, 1)
+    // if (hue < 0.0) hue += 1.0; // Ensure positive
 
     // Calculate Saturation based on w1 (angular velocity of first segment)
     // Normalize w1. Assuming w1 can range. You might need to adjust the range here.
@@ -110,7 +108,7 @@ __kernel void simulate(
     // For demonstration, let's normalize w1 from 0 to some max_w1_abs.
     // Example: max_w1_abs = 10.0 (adjust based on typical w1 values)
     // float max_w1_abs = 10.0f; // This value might need tuning
-    float saturation = fabs(w1); // Clamp to [0, 1]
+    // float saturation = fabs(w1); // Clamp to [0, 1]
 
     // Brightness based on cycles (similar to previous, but as float)
     // Higher cycles (longer stability) can be brighter.
@@ -118,7 +116,6 @@ __kernel void simulate(
     float brightness = (float)cycles;
     //brightness = fmin(1.0f, brightness); // Ensure it's not over 1.0
 
-    out_H[gid] = 0; // Output normalized hue
-    out_S[gid] = 0; // Output normalized saturation
-    out_B[gid] = brightness; // Output normalized brightness
+    out_brightness[gid] = brightness; // Output normalized hue
+    
 }
