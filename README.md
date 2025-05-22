@@ -12,7 +12,7 @@ It will open a window where you can click. Then it will create a subfolder in fr
 
 Or run windowless rendering with the test point:
 
-    ./run.sh --pfile testpoint.json --anim --folder testpoint
+    ./run.sh --pfile testpoint.json --anim --folder testpoint.json
 
 run.sh is needed to restart script in case of GPU hang.
 
