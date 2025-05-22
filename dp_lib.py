@@ -14,7 +14,7 @@ class Mapper:
         self.params = params or {}
         self.raw_data = None
         self.normalized_data = None
-        self.keyframes = []  # Новое поле для хранения ключевых кадров
+        self.keyframes = []  # New field for storing keyframes
         
     @staticmethod
     
@@ -25,13 +25,13 @@ class Mapper:
 
     def interpolate_zoom(self, anim):
         t = anim['step'] / anim['total_steps']
-        # Начальные и целевые границы
+        # Initial and target boundaries
         start_vx_min, start_vx_max, start_vy_min, start_vy_max = anim['start_view']
         target_vx_min, target_vx_max, target_vy_min, target_vy_max = anim['target_view']
-        phase_cutoff = 0.05  # 5% времени на центрирование
+        phase_cutoff = 0.05  # 5% of time for centering
         
 
-        # Исходные параметры
+        # Initial parameters
         start_scale_x = start_vx_max - start_vx_min
         target_scale_x = target_vx_max - target_vx_min
         start_scale_y = start_vy_max - start_vy_min
@@ -42,53 +42,53 @@ class Mapper:
         target_center = ((target_vx_min + target_vx_max)/2, 
                         (target_vy_min + target_vy_max)/2)
 
-        # Рассчитываем целевой масштаб для фазы 1 (уменьшение в 2 раза)
+        # Calculate target scale for phase 1 (reduce by 2)
         phase1_target_scale_x = start_scale_x / 2
         phase1_target_scale_y = start_scale_y / 2
 
         if t <= phase_cutoff:
-            # Фаза 1: Панорамирование + уменьшение масштаба
+            # Phase 1: Panning + scale reduction
             t_phase = t / phase_cutoff
-            t_eased = 0.5 * (1 - math.cos(t_phase * math.pi))  # Плавное ускорение
+            t_eased = 0.5 * (1 - math.cos(t_phase * math.pi))  # Smooth acceleration
             
-            # Интерполяция центра
+            # Center interpolation
             current_center_x = start_center[0] + (target_center[0] - start_center[0]) * t_eased
             current_center_y = start_center[1] + (target_center[1] - start_center[1]) * t_eased
             
-            # Интерполяция масштаба до уменьшенного в 2 раза
+            # Scale interpolation to reduced by 2
             current_scale_x = start_scale_x - (start_scale_x - phase1_target_scale_x) * t_eased
             current_scale_y = start_scale_y - (start_scale_y - phase1_target_scale_y) * t_eased
             
         else:
-            # Фаза 2: Экспоненциальное увеличение
+            # Phase 2: Exponential increase
             t_phase = (t - phase_cutoff) / (1 - phase_cutoff)
             
-            # Начальный масштаб - результат фазы 1
+            # Initial scale - result of phase 1
             start_scale_phase2_x = phase1_target_scale_x
             start_scale_phase2_y = phase1_target_scale_y
             
-            # Экспоненциальная интерполяция
+            # Exponential interpolation
             current_scale_x = start_scale_phase2_x * (target_scale_x / start_scale_phase2_x) ** t_phase
             current_scale_y = start_scale_phase2_y * (target_scale_y / start_scale_phase2_y) ** t_phase
             
-            # Центр фиксируется на целевом
+            # Center is fixed at the target
             current_center_x = target_center[0]
             current_center_y = target_center[1]
 
-        # Рассчет границ области
+        # Calculate area boundaries
         interp_x_min = current_center_x - current_scale_x / 2
         interp_x_max = current_center_x + current_scale_x / 2
         interp_y_min = current_center_y - current_scale_y / 2
         interp_y_max = current_center_y + current_scale_y / 2
 
-        # Гарантия, что целевая область остается в кадре
+        # Guarantee that the target area remains in frame
         interp_x_min = max(interp_x_min, target_vx_min)
         interp_x_max = min(interp_x_max, target_vx_max)
         interp_y_min = max(interp_y_min, target_vy_min)
         interp_y_max = min(interp_y_max, target_vy_max)
 
     
-        # Рассчитываем границы
+        # Calculate boundaries
         interp_x_min = current_center_x - current_scale_x / 2
         interp_x_max = current_center_x + current_scale_x / 2
         interp_y_min = current_center_y - current_scale_y / 2
@@ -102,14 +102,14 @@ class Mapper:
 
     def normalize_data(self, raw_data):
         self.raw_data = self.compute_map()
-        """ Нормализует сырые данные (логарифм + min-max масштабирование в 0-255). """
-        # Применяем натуральный логарифм (log1p для обработки нулей: log(1+x))
+        """ Normalizes raw data (logarithm + min-max scaling to 0-255). """
+        # Apply natural logarithm (log1p for zeros: log(1+x))
         log_data = np.log1p(self.raw_data.astype(np.float64))
 
         min_log_val = np.min(log_data)
         max_log_val = np.max(log_data)
         
-        if max_log_val == min_log_val: # Если все значения одинаковы
+        if max_log_val == min_log_val: # If all values are the same
             normalized_data = np.zeros_like(log_data, dtype=np.uint8)
         else:
             normalized_data = 255 * (log_data - min_log_val) / (max_log_val - min_log_val)
@@ -123,17 +123,17 @@ class Mapper:
 
 
     def add_keyframe(self, filename, view_width_deg):
-        """Добавляет ключевой кадр только при изменении параметров и обновляет target_view"""
-        # Копируем параметры, исключая current_view
+        """Adds a keyframe only if parameters change and updates target_view"""
+        # Copy parameters, excluding current_view
         params_to_save = {k: v for k, v in self.params.items() if k not in ['current_view']}
         
-        # Проверяем, отличаются ли параметры от предыдущего кадра
+        # Check if parameters differ from previous frame
         if self.keyframes:
             last_params = self.keyframes[-1]["params"]
             if params_to_save == last_params:
-                # Даже если параметры не изменились, обновим target_view
+                # Even if parameters didn't change, update target_view
                 self._save_keyframes(filename)
-                return  # Параметры не изменились - пропускаем добавление, но обновляем view
+                return  # Parameters didn't change - skip adding, but update view
         
         new_keyframe = {
             "target_view_width": view_width_deg,
@@ -146,7 +146,7 @@ class Mapper:
 
 
     def _save_keyframes(self, filename):
-        """Сохраняет ключевые кадры и целевой вид отдельно"""
+        """Saves keyframes and target view separately"""
         state = {
             "keyframes": self.keyframes,
             "target_view": list(self.get_current_view())
@@ -182,33 +182,33 @@ class Mapper:
     def calc_and_get_rgb_data(self):
         self.compute_map()
         self.normalize_data(self.raw_data)
-        """Генерирует RGB данные из нормализованных 2D данных с предобработкой"""
+        """Generates RGB data from normalized 2D data with preprocessing"""
         img_data = self.normalized_data.copy()
         
         median_size = self.get_median_filter_size()
         
         if median_size and median_size > 0:
             img_data = median_filter(img_data, size=median_size)        
-        # Нормализуем и конвертируем в uint8
+        # Normalize and convert to uint8
         if img_data.max() <= 1.0:
             img_data = (img_data * 255).astype(np.uint8)
         else:
             img_data = img_data.astype(np.uint8)
         
 
-        #Инверсия, если требуется
+        # Inversion, if required
         if self.get_invert():
             img_data = 255 - img_data
 
-        # Создаем 3-канальное изображение
+        # Create 3-channel image
         height, width = img_data.shape
         rgb_data = np.zeros((height, width, 3), dtype=np.uint8)
-        rgb_data[:, :, :] = img_data[..., np.newaxis]  # Копируем данные во все 3 канала
+        rgb_data[:, :, :] = img_data[..., np.newaxis]  # Copy data to all 3 channels
         
         return rgb_data
 
     def init_point_file(self, filename):
-        """Создаёт или перезаписывает файл с начальными параметрами и текущим видом"""
+        """Creates or overwrites a file with initial parameters and current view"""
         state = {
             "start_params": {
                 "L1": self.params.get('L1', 1.0),
@@ -225,7 +225,7 @@ class Mapper:
             json.dump(state, f, indent=2)
 
     def set_median_filter_size(self, size):
-        """Устанавливает размер медианного фильтра (0 — не применять)"""
+        """Sets the median filter size (0 — do not apply)"""
         self._median_filter_size = size
 
     def get_median_filter_size(self):
@@ -300,8 +300,8 @@ class CLMapper(Mapper):
                     key, value_str = match.groups()
                     self.default_view_from_kernel[key] = float(value_str)
 
-        # --- Корректировка под соотношение сторон ---
-        # Корректируем только если все 4 параметра считаны и известны размеры
+        # --- Adjust to aspect ratio ---
+        # Adjust only if all 4 parameters are read and sizes are known
         if all(k in self.default_view_from_kernel for k in ('x_min', 'x_max', 'y_min', 'y_max')):
             x_min = self.default_view_from_kernel['x_min']
             x_max = self.default_view_from_kernel['x_max']
@@ -310,7 +310,7 @@ class CLMapper(Mapper):
             span_x = x_max - x_min
             span_y = y_max - y_min
 
-            # Получаем размеры из self.width/self.height, если они есть
+            # Get sizes from self.width/self.height, if present
             width = getattr(self, 'width', None)
             height = getattr(self, 'height', None)
             if width is not None and height is not None:
@@ -318,13 +318,13 @@ class CLMapper(Mapper):
                 aspect_target = width / height
 
                 if (aspect_kernel < aspect_target):
-                    # Нужно увеличить span_x
+                    # Need to increase span_x
                     new_span_x = span_y * aspect_target
                     center_x = (x_min + x_max) / 2
                     x_min = center_x - new_span_x / 2
                     x_max = center_x + new_span_x / 2
                 elif (aspect_kernel > aspect_target):
-                    # Нужно увеличить span_y
+                    # Need to increase span_y
                     new_span_y = span_x / aspect_target
                     center_y = (y_min + y_max) / 2
                     y_min = center_y - new_span_y / 2
@@ -341,7 +341,7 @@ class CLMapper(Mapper):
         params = []
         for name in self.param_order:
             value = self.params.get(name)
-            # print(f"param {name}: {value} ({type(value)})")  # <-- добавьте это
+            # print(f"param {name}: {value} ({type(value)})")  # <-- add this for debug
             if isinstance(value, float):
                 params.append(np.double(value))
             elif isinstance(value, int):

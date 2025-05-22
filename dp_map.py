@@ -37,8 +37,8 @@ parser.add_argument('--min_x', type=float, default=None, help='Min X for view (o
 parser.add_argument('--max_x', type=float, default=None, help='Max X for view (overrides kernel default)')
 parser.add_argument('--min_y', type=float, default=None, help='Min Y for view (overrides kernel default)')
 parser.add_argument('--max_y', type=float, default=None, help='Max Y for view (overrides kernel default)')
-parser.add_argument('--median', type=int, default=3, help='Размер медианного фильтра (0 — не применять)')
-parser.add_argument('--invert', action='store_true', help='Инвертировать изображение (минимум=255, максимум=0)')
+parser.add_argument('--median', type=int, default=3, help='Median filter size (0 — do not apply)')
+parser.add_argument('--invert', action='store_true', help='Invert image (min=255, max=0)')
 
 # New arguments for generic parameter passing
 parser.add_argument('--param', nargs=2, action='append', metavar=('NAME', 'VALUE'),
@@ -53,10 +53,10 @@ else:
 
 if wid %2 != 0: wid += 1
 
-# --- Конфигурация ---
+# --- Configuration ---
 WIDTH, HEIGHT = wid, args.height
 
-ZOOM_FACTOR = 0.1       # Коэффициент зума при клике мыши  
+ZOOM_FACTOR = 0.1       # Zoom factor on mouse click
 
 frame_counter = 0
 
@@ -73,7 +73,7 @@ def find_max_frame_number(directory):
     
     return max_num if max_num != -1 else 0
 
-# --- Глобальные переменные для анимации и сохранения ---
+# --- Global variables for animation and saving ---
 frames_dir = ""
 animation_queue = [] # [(type, data, current_step, total_steps, prev_data_norm)]
 
@@ -105,7 +105,7 @@ def setup_frame_saving():
     print(f"Saving frames to: {frames_dir}")
 
 def save_to_file(rgb_data):
-    """Сохраняет обработанные данные в файл"""
+    """Saves processed data to file"""
     global frame_counter, frames_dir
     
     img = Image.fromarray(rgb_data)
@@ -113,7 +113,7 @@ def save_to_file(rgb_data):
     img.save(filename)
    
 def create_surface_from_normalized_data(rgb_data):
-    """Создает поверхность Pygame из обработанных данных"""
+    """Creates a Pygame surface from processed data"""
     return pygame.surfarray.make_surface(rgb_data.transpose(1, 0, 2))
 
 def main():
@@ -237,6 +237,7 @@ def main():
     rendered_frames = 0
     running = True
     view_history = [mapper.get_current_view()]  # Initialize stack with the first view
+    current_width = 0.0
     while running:
         if animation_queue:
             anim = animation_queue[0]
@@ -343,17 +344,16 @@ def main():
             progress_percent = (anim['step'] / anim['total_steps']) * 100
             frames_per_second = (1.0 / avg_frame_time)*60 if avg_frame_time > 0 else 0 # frames per minute if multiplied by 60
             
-            viewing_degree_angle = math.degrees(mapper.get_current_view()[1]-mapper.get_current_view()[0])
-            
-            timestamp = frame_counter/30 # Assuming 30 FPS for timestamp display
-
+            viewing_degree_angle = math.degrees(mapper.get_current_view()[1] - mapper.get_current_view()[0])
+            timestamp = frame_counter / 30  # Assuming 30 FPS for timestamp display
+            print(interp_x_min, interp_x_max)
             print(f"Done {(frame_counter-1):05d}/{anim['total_steps']}\t"
-                f"{viewing_degree_angle:.2f}° @ TS {timestamp:.3f}s\t"
-                f"rendered {elapsed_time:.3f}s @ "
-                f"{frames_per_second:.2f}fpm\t"
-                f"estimated {estimated_time_str} "
-                f"({progress_percent:.1f}%)"
-                )
+                  f"{viewing_degree_angle}° @ TS {timestamp:.3f}s\t"
+                  f"rendered {elapsed_time:.3f}s @ "
+                  f"{frames_per_second:.2f}fpm\t"
+                  f"estimated {estimated_time_str} "
+                  f"({progress_percent:.1f}%)"
+            )
             
             rendered_frames +=1
 
@@ -414,7 +414,7 @@ def main():
                         target_x_min = data_x -  new_span_x / 2 # Center zoom
                         target_x_max = data_x +  new_span_x / 2
                         target_y_min = data_y - new_span_y / 2
-                        target_y_max = data_y +  new_span_y / 2
+                        target_y_max = data_y + new_span_y / 2
 
                         view_width = target_x_max - target_x_min
                         view_width_deg = math.degrees(view_width)
