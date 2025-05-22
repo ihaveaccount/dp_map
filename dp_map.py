@@ -205,22 +205,22 @@ def main():
 
     if frame_counter == 0:
         print("Performing initial calculation...")
-        if not args.skipcalc:           
-            new_target = (x_min, x_max, y_min, y_max)
-            view_width_deg = math.degrees(x_max - x_min)
-            mapper.set_current_view(*new_target)
-
-            rgb_data = mapper.calc_and_get_rgb_data()
-            
-            if not args.anim:
-                mapper.add_keyframe(args.pfile, view_width_deg)
-
-            if args.anim:
-                save_to_file(rgb_data)
-                frame_counter += 1
-            else:
-                mapper.init_point_file(args.pfile)
-                current_surface = create_surface_from_normalized_data(rgb_data)
+        if not args.skipcalc:
+            if not args.paranim:
+                new_target = (x_min, x_max, y_min, y_max)
+                
+                view_width_deg = math.degrees(x_max - x_min)
+                
+                mapper.set_current_view(*new_target)
+                rgb_data = mapper.calc_and_get_rgb_data()
+                
+                if args.anim:
+                    save_to_file(rgb_data)
+                    frame_counter += 1
+                else:
+                    mapper.add_keyframe(args.pfile, view_width_deg)
+                    mapper.init_point_file(args.pfile)
+                    current_surface = create_surface_from_normalized_data(rgb_data)
         else:
              # Create a dummy surface if calculation is skipped and not in animation mode
             if not args.anim:
@@ -348,7 +348,7 @@ def main():
             if anim['type'] == 'param_interpolation':
                 # Интерполируем каждый параметр
                 t = anim['step'] / anim['total_steps']  # Убедимся что t вычисляется правильно
-                
+                t = 0.5 * (1 - math.cos(math.pi * t))
                 for param_name in anim['target_params']:
                     
     
