@@ -16,6 +16,7 @@ class Mapper:
         self.normalized_data = {} # Changed to dictionary for multiple normalized channels
         self.keyframes = []  # New field for storing keyframes
         self.output_channels = ['brightness'] # Default output channel, can be 'R', 'G', 'B', 'H', 'S', 'V'
+        self.initial_params = {}
         
     @staticmethod
     
@@ -328,29 +329,34 @@ class CLMapper(Mapper):
         self.input_ys_np = np.empty(self.num_points, dtype=np.double) # Renamed
 
     def _parse_kernel_parameters(self, kernel_code):
-        param_pattern = re.compile(r'//\s*PARAM:\s*(\w+)\s+(\w+)\s+([\d\.\-]+)') # Handles negative defaults
+        param_pattern = re.compile(r'//\s*PARAM:\s*(\w+)\s+(\w+)\s+([\d\.\-]+)')
         self.param_order = []
+        self.initial_params.clear()  # Очищаем перед парсингом
         for line in kernel_code.split('\n'):
             line = line.strip()
             if line.startswith('// PARAM:'):
                 match = param_pattern.match(line)
                 if match:
                     name, type_str, default_str = match.groups()
-                    # Skip width and height as they are passed separately
                     if name in ['width', 'height']:
                         continue
-                    
-                    if name not in self.params: # Only set if not already set by dp_map.py args
-                        if type_str == 'double':
-                            default = float(default_str)
-                        elif type_str == 'int':
-                            default = int(default_str)
-                        else:
-                            continue  # Unsupported type
+                    # Определение типа значения
+                    if type_str == 'double':
+                        default = float(default_str)
+                    elif type_str == 'int':
+                        default = int(default_str)
+                    else:
+                        continue  # Пропускаем неподдерживаемые типы
+                    # Сохраняем в initial_params
+                    self.initial_params[name] = default
+                    # Добавляем в self.params, если отсутствует
+                    if name not in self.params:
                         self.params[name] = default
                     self.param_order.append(name)
-        # Ensure required parameters are present
 
+    def get_initial_params(self):
+        """Возвращает параметры, прочитанные из комментариев шейдера."""
+        return self.initial_params.copy()  # Возвращаем копию для безопасности
 
 
     def _parse_kernel_view_defaults(self, kernel_code):

@@ -17,7 +17,8 @@ Or run windowless rendering with the test point:
 run.sh is needed to restart script in case of GPU hang.
 
 ## Parameters
- - --anim - enable animation rendering. No graphics are displayed on the screen. Frames will be written in selected folder
+ - --anim - enable zoom animation rendering. No graphics are displayed on the screen. Frames will be written in selected folder
+ - --paranim - parameter change animation, without zoom
  - --height - vertical resolution. Default: 1080
  - --frames - number of frames for animation. Default: 1800
  - --folder - name of subfolder in frames/, where the point for animation lies and which will contain the final frames. Default: created with the current date.
@@ -30,7 +31,7 @@ run.sh is needed to restart script in case of GPU hang.
  - --invert - invert colors
  - --x_min, x_max, y_min, y_max - starting view params. Default: kernel settings.
  - --param PARAM_NAME PARAM_VALUE - set params according to shader values. Default: kernel settings.
-
+ 
  ## create_video.sh - wrapper for ffmpeg
 
     ./create_video.sh path/to/folder

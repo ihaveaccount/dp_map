@@ -44,6 +44,10 @@ parser.add_argument('--invert', action='store_true', help='Invert image (min=255
 parser.add_argument('--param', nargs=2, action='append', metavar=('NAME', 'VALUE'),
                     help='Set a kernel parameter. Use multiple --param NAME VALUE for multiple parameters.')
 
+parser.add_argument('--paranim', action='store_true', 
+                    help='Animate parameter interpolation from current to --param values')
+
+
 args = parser.parse_args()
 
 if args.vertical:
@@ -130,6 +134,11 @@ def main():
     if args.anim and not args.folder:
         print("Error: --folder argument is required for animation.")
         return
+    
+
+    if args.paranim:
+        args.anim = True
+
                 
     total_render_time = 0
     render_time_history = []
@@ -137,7 +146,7 @@ def main():
     # Initialize params dictionary
     params = {}
     
-    # Process generic --param arguments
+    
     if args.param:
         for param_name, param_value in args.param:
             try:
@@ -152,12 +161,13 @@ def main():
 
 
     mapper = CLMapper(
-        width=WIDTH,
-        height=HEIGHT,
-        kernel_file=args.kernel,
-        params=params.copy() 
-    )
-    
+                width=WIDTH,
+                height=HEIGHT,
+                kernel_file=args.kernel,
+                params = params.copy()
+            )
+
+        
     mapper.set_median_filter_size(args.median)
     mapper.set_invert(args.invert)
     
@@ -218,7 +228,26 @@ def main():
                 current_surface.fill((100, 100, 100)) # Grey background
             frame_counter += 1 # Increment even if skipped for consistency in animation start
 
-    if args.anim:
+    if args.paranim:
+        if not args.param:
+            print("Error: --paranim requires at least one --param to animate.")
+            return
+
+        # Берём дефолтные значения из шейдера (mapper.params после создания, до применения --param)
+        default_params = mapper.get_initial_params()
+
+        
+
+        animation_queue.append({
+            'type': 'param_interpolation',
+            'start_params': default_params.copy(),
+            'target_params': mapper.params.copy(),
+            'step': frame_counter,
+            'total_steps': args.frames
+        })
+
+
+    elif args.anim:
         if args.pfile != "":
             initial_params = mapper.params.copy() # Capture current params before loading
             
@@ -236,6 +265,8 @@ def main():
                 'step': frame_counter,
                 'total_steps': args.frames
             })
+    
+
         
     total_time = time.time()
     rendered_frames = 0
@@ -313,6 +344,39 @@ def main():
                             
                 mapper.set_current_view(interp_x_min, interp_x_max, interp_y_min, interp_y_max)
 
+
+            if anim['type'] == 'param_interpolation':
+                # Интерполируем каждый параметр
+                t = anim['step'] / anim['total_steps']  # Убедимся что t вычисляется правильно
+                
+                for param_name in anim['target_params']:
+                    
+    
+                    if param_name not in mapper.params:
+                        continue
+                    
+                    start_val = anim['start_params'].get(param_name, mapper.params[param_name])
+                    end_val = anim['target_params'][param_name]
+                    
+                    if start_val == end_val:
+                        continue
+                        
+                    if not isinstance(start_val, (int, float)) or not isinstance(end_val, (int, float)):
+                        continue
+                    
+                    # Добавим ограничение для t
+                    t = max(0.0, min(1.0, t))
+                    interpolated = start_val + (end_val - start_val) * t
+                                        
+                    print(f"{param_name} {start_val}->{end_val} = {interpolated}")
+                    
+                    if isinstance(mapper.params[param_name], int):
+                        mapper.params[param_name] = int(round(interpolated))
+                    else:
+                        mapper.params[param_name] = interpolated
+
+
+
             # End animation
             if anim['step'] >= anim['total_steps']:
                 mapper.set_current_view(target_vx_min, target_vx_max, target_vy_min, target_vy_max)
@@ -350,7 +414,7 @@ def main():
             
             viewing_degree_angle = math.degrees(mapper.get_current_view()[1] - mapper.get_current_view()[0])
             timestamp = frame_counter / 30  # Assuming 30 FPS for timestamp display
-            print(interp_x_min, interp_x_max)
+            
             print(f"Done {(frame_counter-1):05d}/{anim['total_steps']}\t"
                   f"{viewing_degree_angle}° @ TS {timestamp:.3f}s\t"
                   f"rendered {elapsed_time:.3f}s @ "
