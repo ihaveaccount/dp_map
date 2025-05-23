@@ -194,6 +194,7 @@ class Mapper:
 
 
     def calc_and_get_rgb_data(self):
+        
         self.compute_map()
 
         timer = time.time()
@@ -273,6 +274,11 @@ class Mapper:
     def get_invert(self):
         return getattr(self, '_invert', False)
 
+    def get_parameters(self):
+        """
+        Returns a copy of all current parameters (including current_view and any user overrides).
+        """
+        return self.params.copy()
 
 
 class CLMapper(Mapper):
@@ -284,13 +290,21 @@ class CLMapper(Mapper):
         with open(kernel_file, "r") as f:
             kernel_code = f.read()
         
-        self.params = params.copy() if params else {}
         self.param_order = []
-        self.kernel_function_name = 'simulate' # Default kernel function name
-        self.default_view_from_kernel = {} # Store default view from kernel comments
+        self.kernel_function_name = 'simulate'
+        self.default_view_from_kernel = {}
         self._parse_kernel_parameters(kernel_code)
         self._parse_kernel_view_defaults(kernel_code)
-        self._parse_kernel_output_channels(kernel_code) # New: parse output channels
+        self._parse_kernel_output_channels(kernel_code)
+
+        # После парсинга параметров из ядра, только теперь применяем params поверх дефолтов:
+        if params:
+            for k, v in params.items():
+                self.params[k] = v
+        # Гарантируем, что все параметры из ядра есть в self.params
+        for name in self.param_order:
+            if name not in self.params:
+                self.params[name] = self.initial_params[name]
         
         self.prg = cl.Program(self.ctx, kernel_code).build()
         
@@ -413,9 +427,22 @@ class CLMapper(Mapper):
         # print("Final params:", params)
         return tuple(params)
 
+    def set_params(self, params):
+        """
+        Overwrites current parameters with the provided dictionary, keeping any missing parameters unchanged.
+        """
+        if params:
+            for k, v in params.items():
+                self.params[k] = v
+        # Гарантируем, что все параметры из param_order присутствуют (даже если не были явно заданы)
+        for name in self.param_order:
+            if name not in self.params:
+                self.params[name] = self.initial_params[name]
+
     def compute_map(self):
-        x_min, x_max, y_min, y_max = self.params['current_view']
-        # initial_xs and initial_ys are used for the kernel arguments
+        # Use current parameters from get_parameters()
+        params = self.get_parameters()
+        x_min, x_max, y_min, y_max = params['current_view']
         xs_vals = np.linspace(x_min, x_max, self.width, dtype=np.double)
         ys_vals = np.linspace(y_min, y_max, self.height, dtype=np.double)
 
@@ -432,29 +459,16 @@ class CLMapper(Mapper):
             input_xs_buf,
             input_ys_buf,
         ]
-        # Add output buffers dynamically
         for channel_name in self.output_channels:
             kernel_args.append(self.output_bufs[channel_name])
-            
         kernel_args.extend(self.get_kernel_params())
-        
-        # print("kernel_args types:", [type(a) for a in kernel_args])
-        
-        global_size = (self.height, self.width) # PyOpenCL expects (rows, cols) for 2D
+
+        global_size = (self.height, self.width)
         kernel_func = getattr(self.prg, self.kernel_function_name)
         kernel_func(self.queue, global_size, None, *kernel_args).wait()
-        
-        # Enqueue copy for each output channel
+
         for channel_name in self.output_channels:
             cl.enqueue_copy(self.queue, self.raw_data[channel_name], self.output_bufs[channel_name]).wait()
-            
 
-        # ... (after cl.enqueue_copy for all channels)
-        # for channel_name in self.output_channels:
-        #     cl.enqueue_copy(self.queue, self.raw_data[channel_name], self.output_bufs[channel_name]).wait()
-        #     # Debugging: Print some statistics of the raw data
-        #     print(f"Raw data for {channel_name}: min={np.min(self.raw_data[channel_name])}, max={np.max(self.raw_data[channel_name])}, mean={np.mean(self.raw_data[channel_name])}")
-        #     print(f"Raw data (first 10 elements): {self.raw_data[channel_name][:10]}")
+        return self.raw_data
 
-
-        return self.raw_data # Return the dictionary of raw data

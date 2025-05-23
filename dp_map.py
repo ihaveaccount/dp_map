@@ -180,14 +180,6 @@ def main():
     mapper.set_invert(args.invert)
 
 
-
-    
-
-
-
-
-
-
     # Override with command line arguments if provided
     if args.min_x is not None:
         x_min = args.min_x
@@ -203,10 +195,8 @@ def main():
     
     target_vx_min, target_vx_max, target_vy_min, target_vy_max = x_min, x_max, y_min, y_max # For animation logic
 
-
     setup_frame_saving() 
 
-    current_normalized_data = None 
     
     # Parameters for keyboard control
     # Get a sorted list of parameter names for consistent indexing
@@ -251,7 +241,7 @@ def main():
             return
 
         # 1. Получаем дефолтные значения из шейдера
-        default_params = {}
+        default_params = mapper.get_initial_params()
 
         # 2. Формируем стартовые параметры из --param (поверх дефолтов)
         start_params = default_params.copy()
@@ -265,7 +255,7 @@ def main():
                 start_params[param_name] = param_value
 
         # 3. Формируем целевые параметры из --param_to (поверх дефолтов)
-        target_params = {}
+        target_params = default_params.copy()
         for param_name, param_value in args.param_to:
             try:
                 if '.' in param_value:
@@ -275,6 +265,9 @@ def main():
             except ValueError:
                 target_params[param_name] = param_value
 
+        print("Start params: ", start_params)
+        print("Target params: ", target_params)
+
         animation_queue.append({
             'type': 'param_interpolation',
             'start_params': start_params.copy(),
@@ -282,7 +275,6 @@ def main():
             'step': frame_counter,
             'total_steps': args.frames
         })
-
 
 
     elif args.anim:
@@ -384,35 +376,30 @@ def main():
 
 
             if anim['type'] == 'param_interpolation':
-                # Интерполируем каждый параметр
-                t = anim['step'] / anim['total_steps']  # Убедимся что t вычисляется правильно
+                t = anim['step'] / anim['total_steps']
                 t = 0.5 * (1 - math.cos(math.pi * t))
 
-                for param_name in anim['target_params']:
-                    
-    
-                    if param_name not in mapper.params:
+                params = {}
+
+                # Интерполировать все параметры, которые есть в start_params и target_params
+                for param_name in set(anim['start_params'].keys()).union(anim['target_params'].keys()):
+                    start_val = anim['start_params'].get(param_name, mapper.params.get(param_name))
+                    end_val = anim['target_params'].get(param_name, start_val)
+                    if start_val == end_val or not isinstance(start_val, (int, float)) or not isinstance(end_val, (int, float)):
+                        params[param_name] = start_val
                         continue
-                    
-                    start_val = anim['start_params'].get(param_name, mapper.params[param_name])
-                    end_val = anim['target_params'][param_name]
-                    
-                    if start_val == end_val:
-                        continue
-                        
-                    if not isinstance(start_val, (int, float)) or not isinstance(end_val, (int, float)):
-                        continue
-                    
-                    # Добавим ограничение для t
-                    t = max(0.0, min(1.0, t))
                     interpolated = start_val + (end_val - start_val) * t
-                                        
+
+
                     print(f"{param_name} {start_val}->{end_val} = {interpolated}")
-                    
-                    if isinstance(mapper.params[param_name], int):
-                        mapper.params[param_name] = int(round(interpolated))
+
+                    if isinstance(start_val, int):
+                        params[param_name] = int(round(interpolated))
                     else:
-                        mapper.params[param_name] = interpolated
+                        params[param_name] = interpolated
+
+                
+                mapper.set_params(params)
 
 
 
@@ -421,6 +408,8 @@ def main():
                 mapper.set_current_view(target_vx_min, target_vx_max, target_vy_min, target_vy_max)
                 animation_queue.pop(0)
         
+
+
             start_time = time.time()
             if not args.skipcalc:
                 rgb_data = mapper.calc_and_get_rgb_data()
