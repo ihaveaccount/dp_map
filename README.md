@@ -24,6 +24,7 @@ run.sh is needed to restart script in case of GPU hang.
  - --folder - name of subfolder in frames/, where the point for animation lies and which will contain the final frames. Default: created with the current date.
  - --pfile - path to the file with the point.  Default: frames/[folder]/point.json
  - --start - start from a specific frame. Default: continues from the png number in the folder
+ - --end - end frame (inclusive)
  - --kernel - shader filename. Default: pendulum.c
  - --skipcalc - show only rendering log with degrees and timestamps, no calculations.
  - --vertical - swap width and height.

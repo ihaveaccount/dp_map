@@ -20,6 +20,7 @@ parser.add_argument('--height', type=int, default=1080,
 parser.add_argument('--frames', type=int, default=1800,help='Number of frames for animation')
 
 parser.add_argument('--start', type=int, default=0,help='Start frame for animation') 
+parser.add_argument('--end', type=int, default=None,help='End frame for animation (exclusive)')
 
 parser.add_argument('--folder', type=str, default="",help='Folder to save frames')
 parser.add_argument('--pfile', type=str, default="",help='File with target point coordinates')
@@ -405,14 +406,6 @@ def main():
                 mapper.set_params(params)
 
 
-
-            # End animation
-            if anim['step'] >= anim['total_steps']:
-                mapper.set_current_view(target_vx_min, target_vx_max, target_vy_min, target_vy_max)
-                animation_queue.pop(0)
-        
-
-
             start_time = time.time()
             if not args.skipcalc:
                 rgb_data = mapper.calc_and_get_rgb_data()
@@ -424,6 +417,11 @@ def main():
                     current_surface = create_surface_from_normalized_data(rgb_data)
             else:
                 frame_counter += 1
+
+            # End animation - check after frame calculation and saving
+            if anim['step'] >= anim['total_steps'] or (args.end is not None and frame_counter > args.end):
+                mapper.set_current_view(target_vx_min, target_vx_max, target_vy_min, target_vy_max)
+                animation_queue.pop(0)
             
             end_time = time.time()
 
@@ -432,7 +430,13 @@ def main():
             total_render_time += elapsed_time
 
             avg_frame_time = total_render_time / len(render_time_history)
-            remaining_frames = anim['total_steps'] - anim['step']
+            
+            # Calculate remaining frames considering --end argument
+            effective_total_steps = anim['total_steps']
+            if args.end is not None and args.end < anim['total_steps']:
+                effective_total_steps = args.end
+            
+            remaining_frames = effective_total_steps - anim['step']
 
             total_seconds = avg_frame_time * remaining_frames
             hours = int(total_seconds // 3600)
@@ -440,23 +444,26 @@ def main():
             seconds = int(total_seconds % 60)
             estimated_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-            progress_percent = (anim['step'] / anim['total_steps']) * 100
+            progress_percent = (anim['step'] / effective_total_steps) * 100
             frames_per_second = (1.0 / avg_frame_time)*60 if avg_frame_time > 0 else 0 # frames per minute if multiplied by 60
             
-            viewing_degree_angle = math.degrees(mapper.get_current_view()[1] - mapper.get_current_view()[0])
+            viewing_angle = mapper.get_current_view()[1] - mapper.get_current_view()[0]
             timestamp = frame_counter / 30  # Assuming 30 FPS for timestamp display
             
-            print(f"Done {(frame_counter-1):05d}/{anim['total_steps']}\t"
-                  f"{viewing_degree_angle} @ TS {timestamp:.3f}s\t"
-                  f"rendered {elapsed_time:.3f}s @ "
-                  f"{frames_per_second:.2f}fpm\t"
-                  f"estimated {estimated_time_str} "
+            # Show effective total for display
+            display_total = effective_total_steps if args.end is not None and args.end < anim['total_steps'] else anim['total_steps']
+            
+            print(f"{(frame_counter-1):05d}/{display_total}\t"
+                  f"{viewing_angle:.16e} - TS {timestamp:.3f}s\t"
+                  f"took {elapsed_time:.3f}s @ "
+                  f"{frames_per_second:.2f}fpm\t\t"
+                  f"est. {estimated_time_str} "
                   f"({progress_percent:.1f}%)"
             )
             
             rendered_frames +=1
 
-        elif args.anim and frame_counter > 0:
+        elif args.anim and (frame_counter > 0 or (args.end is not None and frame_counter > args.end)):
             running = False
         
         if not args.anim:
@@ -517,9 +524,9 @@ def main():
                         target_y_max = data_y + new_span_y / 2
 
                         view_width = target_x_max - target_x_min
-                        view_width_deg = math.degrees(view_width)
+                        view_width_deg = (view_width)
 
-                        print("Zooming to ", view_width_deg, "view", (target_x_min, target_x_max, target_y_min, target_y_max) )
+                        print("Zooming to ", f"{view_width_deg:.6e}", "view", (target_x_min, target_x_max, target_y_min, target_y_max) )
                         mapper.set_current_view(target_x_min, target_x_max, target_y_min, target_y_max)
                         rgb_data = mapper.calc_and_get_rgb_data()
                         current_surface = create_surface_from_normalized_data(rgb_data)       
