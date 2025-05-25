@@ -49,18 +49,28 @@ class Mapper:
         phase1_target_scale_x = start_scale_x / 2
         phase1_target_scale_y = start_scale_y / 2
 
+        # Acceleration factor for the end of phase 1 (adjustable parameter)
+        phase1_acceleration = 1.5  # > 1.0 creates acceleration at the end, < 1.0 creates deceleration
+
         if t <= phase_cutoff:
-            # Phase 1: Panning + scale reduction
+            # Phase 1: Panning + scale reduction with configurable end acceleration
             t_phase = t / phase_cutoff
-            t_eased = 0.5 * (1 - math.cos(t_phase * math.pi))  # Smooth acceleration
             
-            # Center interpolation
-            current_center_x = start_center[0] + (target_center[0] - start_center[0]) * t_eased
-            current_center_y = start_center[1] + (target_center[1] - start_center[1]) * t_eased
+            # Different easing for center (panning) and scale
+            # For scale: use power function to create acceleration at the end
+            t_eased_scale = t_phase ** phase1_acceleration
             
-            # Scale interpolation to reduced by 2
-            current_scale_x = start_scale_x - (start_scale_x - phase1_target_scale_x) * t_eased
-            current_scale_y = start_scale_y - (start_scale_y - phase1_target_scale_y) * t_eased
+            # For center (panning): use deceleration at the end for smooth transition
+            # Use inverse power function or cosine-based easing for smooth deceleration
+            t_eased_center = 0.5 * (1 - math.cos(t_phase * math.pi))  # Smooth S-curve with deceleration at end
+            
+            # Center interpolation with deceleration
+            current_center_x = start_center[0] + (target_center[0] - start_center[0]) * t_eased_center
+            current_center_y = start_center[1] + (target_center[1] - start_center[1]) * t_eased_center
+            
+            # Scale interpolation with acceleration (unchanged algorithm)
+            current_scale_x = start_scale_x - (start_scale_x - phase1_target_scale_x) * t_eased_scale
+            current_scale_y = start_scale_y - (start_scale_y - phase1_target_scale_y) * t_eased_scale
             
         else:
             # Phase 2: Exponential increase
