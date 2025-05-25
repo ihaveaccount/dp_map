@@ -146,7 +146,7 @@ class Mapper:
     def get_output_channels(self):
         return self.output_channels
 
-    def add_keyframe(self, filename, view_width_deg):
+    def add_keyframe(self, filename, view_width_absolute):
         """Adds a keyframe only if parameters change and updates target_view"""
         # Copy parameters, excluding current_view
         params_to_save = {k: v for k, v in self.params.items() if k not in ['current_view']}
@@ -160,7 +160,7 @@ class Mapper:
                 return  # Parameters didn't change - skip adding, but update view
         
         new_keyframe = {
-            "target_view_width": view_width_deg,
+            "target_view_width": view_width_absolute,
             "params": params_to_save
         }
         

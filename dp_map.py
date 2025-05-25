@@ -216,7 +216,7 @@ def main():
             if not args.paranim:
                 new_target = (x_min, x_max, y_min, y_max)
                 
-                view_width_deg = math.degrees(x_max - x_min)
+                view_width_absolute = x_max - x_min
                 
                 mapper.set_current_view(*new_target)
                 rgb_data = mapper.calc_and_get_rgb_data()
@@ -225,7 +225,7 @@ def main():
                     save_to_file(rgb_data)
                     frame_counter += 1
                 else:
-                    mapper.add_keyframe(args.pfile, view_width_deg)
+                    mapper.add_keyframe(args.pfile, view_width_absolute)
                     mapper.init_point_file(args.pfile)
                     current_surface = create_surface_from_normalized_data(rgb_data)
         else:
@@ -320,7 +320,7 @@ def main():
                 target_vx_min, target_vx_max, target_vy_min, target_vy_max = anim['target_view']
                 interp_x_min, interp_x_max, interp_y_min, interp_y_max = mapper.interpolate_zoom(anim)
                 
-                current_width = math.degrees(interp_x_max - interp_x_min)
+                current_width = interp_x_max - interp_x_min
                 
                 sorted_keyframes = sorted(mapper.keyframes, key=lambda k: k['target_view_width'])
                 
@@ -443,7 +443,7 @@ def main():
             progress_percent = (anim['step'] / anim['total_steps']) * 100
             frames_per_second = (1.0 / avg_frame_time)*60 if avg_frame_time > 0 else 0 # frames per minute if multiplied by 60
             
-            viewing_degree_angle = mapper.get_current_view()[1] - mapper.get_current_view()[0]
+            viewing_degree_angle = math.degrees(mapper.get_current_view()[1] - mapper.get_current_view()[0])
             timestamp = frame_counter / 30  # Assuming 30 FPS for timestamp display
             
             print(f"Done {(frame_counter-1):05d}/{anim['total_steps']}\t"
@@ -524,7 +524,7 @@ def main():
                         rgb_data = mapper.calc_and_get_rgb_data()
                         current_surface = create_surface_from_normalized_data(rgb_data)       
                         
-                        mapper.add_keyframe(args.pfile, view_width_deg)
+                        mapper.add_keyframe(args.pfile, view_width)
                         
                         current_view = mapper.get_current_view()
                         if not view_history or current_view != view_history[-1]:
