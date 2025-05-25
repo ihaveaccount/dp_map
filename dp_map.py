@@ -359,6 +359,9 @@ def main():
                 else:
                     local_t = (current_width - left_kf['target_view_width']) / width_range
                 
+                # Apply smooth interpolation (same as param_interpolation)
+                local_t = 0.5 * (1 - math.cos(math.pi * local_t))
+                
                 # Interpolate parameters
                 for param_name in mapper.param_order: # Iterate through recognized params
                     if param_name in left_kf['params'] and param_name in right_kf['params']:
