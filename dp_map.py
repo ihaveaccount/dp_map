@@ -51,8 +51,16 @@ parser.add_argument('--param_to', nargs=2, action='append', metavar=('NAME', 'VA
 parser.add_argument('--paranim', action='store_true', 
                     help='Animate parameter interpolation from current to --param values')
 
+parser.add_argument('--smooth', type=int, default=30,
+                    help='Number of frames for normalization smoothing (default: 30)')
+
 
 args = parser.parse_args()
+
+if args.frames != 1800 and not args.anim:
+    print("Warning: --frames is set to a non-default value but --anim is not enabled. Enabling animation.")
+    args.anim = True
+
 
 if args.vertical:
     wid = round(args.height/1.777)
@@ -179,6 +187,7 @@ def main():
 
     mapper.set_median_filter_size(args.median)
     mapper.set_invert(args.invert)
+    mapper.set_normalization_smoothing(args.smooth)
 
 
     # Override with command line arguments if provided
@@ -269,6 +278,9 @@ def main():
         print("Start params: ", start_params)
         print("Target params: ", target_params)
 
+        # Reset normalization history for smooth animation start
+        mapper.reset_normalization_history()
+
         animation_queue.append({
             'type': 'param_interpolation',
             'start_params': start_params.copy(),
@@ -286,6 +298,9 @@ def main():
             mapper, coords = Mapper.load_state(args.pfile, existing_mapper=mapper)
             
             target_params = mapper.params.copy() # Params after loading
+            
+            # Reset normalization history for smooth animation start
+            mapper.reset_normalization_history()
             
             animation_queue.append({
                 'type': 'keyframe',

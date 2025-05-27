@@ -18,6 +18,10 @@ class Mapper:
         self.keyframes = []  # New field for storing keyframes
         self.output_channels = ['brightness'] # Default output channel, can be 'R', 'G', 'B', 'H', 'S', 'V'
         self.initial_params = {}
+        # Normalization smoothing variables
+        self.normalization_history = {}  # Store min/max history for each channel
+        self.smoothing_frames = 30  # Number of frames for smoothing
+        self.target_min_max = {}  # Target min/max values for smooth transition
         
     @staticmethod
     
@@ -114,28 +118,80 @@ class Mapper:
         raise NotImplementedError
 
     def normalize_data(self): # Modified to take no arguments, uses self.raw_data
-        """ Normalizes raw data (logarithm + min-max scaling to 0-255) for each channel. """
+        """ Normalizes raw data (logarithm + min-max scaling to 0-255) for each channel with smooth transitions. """
         for channel_name, raw_channel_data in self.raw_data.items():
             # Apply natural logarithm (log1p for zeros: log(1+x))
             log_data = np.log1p(raw_channel_data.astype(np.float64))
 
-            min_log_val = np.min(log_data)
-            max_log_val = np.max(log_data)
+            current_min = np.min(log_data)
+            current_max = np.max(log_data)
             
-            if max_log_val == min_log_val: # If all values are the same
+            # Initialize history for this channel if not exists
+            if channel_name not in self.normalization_history:
+                self.normalization_history[channel_name] = {
+                    'min_values': [current_min],
+                    'max_values': [current_max],
+                    'smooth_min': current_min,
+                    'smooth_max': current_max
+                }
+                self.target_min_max[channel_name] = {
+                    'target_min': current_min,
+                    'target_max': current_max,
+                    'frames_to_target': 0
+                }
+            
+            history = self.normalization_history[channel_name]
+            target_info = self.target_min_max[channel_name]
+            
+            # Add current values to history
+            history['min_values'].append(current_min)
+            history['max_values'].append(current_max)
+            
+            # Keep only recent history (smoothing_frames)
+            if len(history['min_values']) > self.smoothing_frames:
+                history['min_values'] = history['min_values'][-self.smoothing_frames:]
+                history['max_values'] = history['max_values'][-self.smoothing_frames:]
+            
+            # Calculate target values based on recent history
+            # Use percentiles to avoid extreme outliers
+            target_min = np.percentile(history['min_values'], 10)  # 10th percentile
+            target_max = np.percentile(history['max_values'], 90)  # 90th percentile
+            
+            # If target values changed significantly, start smooth transition
+            min_change_threshold = abs(target_info['target_min'] - target_min) / max(abs(target_info['target_min']), 1e-6)
+            max_change_threshold = abs(target_info['target_max'] - target_max) / max(abs(target_info['target_max']), 1e-6)
+            
+            if min_change_threshold > 0.1 or max_change_threshold > 0.1:  # 10% change threshold
+                target_info['target_min'] = target_min
+                target_info['target_max'] = target_max
+                target_info['frames_to_target'] = self.smoothing_frames
+            
+            # Smooth transition to target values
+            if target_info['frames_to_target'] > 0:
+                # Calculate interpolation factor
+                t = 1.0 - (target_info['frames_to_target'] / self.smoothing_frames)
+                t = 0.5 * (1 - np.cos(np.pi * t))  # Smooth S-curve
+                
+                # Interpolate between current smooth values and targets
+                history['smooth_min'] = history['smooth_min'] + (target_info['target_min'] - history['smooth_min']) * t
+                history['smooth_max'] = history['smooth_max'] + (target_info['target_max'] - history['smooth_max']) * t
+                
+                target_info['frames_to_target'] -= 1
+            else:
+                # No transition, use current targets
+                history['smooth_min'] = target_info['target_min']
+                history['smooth_max'] = target_info['target_max']
+            
+            # Use smoothed min/max for normalization
+            smooth_min = history['smooth_min']
+            smooth_max = history['smooth_max']
+            
+            if smooth_max == smooth_min: # If all values are the same
                 normalized_channel_data = np.zeros_like(log_data, dtype=np.uint8)
             else:
-                normalized_channel_data = 255 * (log_data - min_log_val) / (max_log_val - min_log_val)
+                normalized_channel_data = 255 * (log_data - smooth_min) / (smooth_max - smooth_min)
             
             self.normalized_data[channel_name] = np.clip(normalized_channel_data, 0, 255).astype(np.uint8)
-
-
-        # ... (inside the loop for each channel)
-        self.normalized_data[channel_name] = np.clip(normalized_channel_data, 0, 255).astype(np.uint8)
-        # Debugging: Print some statistics of the normalized data
-        # print(f"Normalized data for {channel_name}: min={np.min(self.normalized_data[channel_name])}, max={np.max(self.normalized_data[channel_name])}, mean={np.mean(self.normalized_data[channel_name])}")
-        # print(f"Normalized data (first 10 elements): {self.normalized_data[channel_name][:10]}")
-        return self.normalized_data         
 
         return self.normalized_data
 
@@ -289,6 +345,15 @@ class Mapper:
         Returns a copy of all current parameters (including current_view and any user overrides).
         """
         return self.params.copy()
+
+    def set_normalization_smoothing(self, frames=30):
+        """Sets the number of frames for normalization smoothing (default: 30)"""
+        self.smoothing_frames = max(1, frames)
+    
+    def reset_normalization_history(self):
+        """Resets normalization history - useful when starting a new animation"""
+        self.normalization_history = {}
+        self.target_min_max = {}
 
 
 class CLMapper(Mapper):
