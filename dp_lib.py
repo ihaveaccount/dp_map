@@ -24,6 +24,17 @@ class Mapper:
         self.smoothing_frames = 120  # Number of frames for smoothing (matches --smooth default)
         self.target_min_max = {}  # Target min/max values for smooth transition
         
+        # Brightness smoothing system
+        self.smoothing_frames = 90  # Number of frames for smooth transition
+        self.brightness_history = {}  # History of min/max values for each channel
+        self.current_smooth_params = {}  # Current smoothing parameters for each channel
+        self.target_smooth_params = {}   # Target smoothing parameters for each channel
+        self.baseline_smooth_params = {}  # Baseline values for comparison (set every N frames)
+        self.smooth_transition_frame = 0  # Frame when transition started
+        self.smooth_file_path = ""  # Will be set in setup
+        self.frame_counter = 0  # Current frame number
+        self.baseline_update_interval = 15  # Update baseline every N frames for comparison
+        
     @staticmethod
     
 
@@ -119,86 +130,160 @@ class Mapper:
         raise NotImplementedError
 
     def normalize_data(self): # Modified to take no arguments, uses self.raw_data
-        """ Normalizes raw data (logarithm + min-max scaling to 0-255) for each channel with smooth transitions. """
+        """ Normalizes raw data with smooth brightness transitions across frames. """
         for channel_name, raw_channel_data in self.raw_data.items():
             # Apply natural logarithm (log1p for zeros: log(1+x))
             log_data = np.log1p(raw_channel_data.astype(np.float64))
 
-            current_min = np.min(log_data)
-            current_max = np.max(log_data)
+            current_min_val = np.min(log_data)
+            current_max_val = np.max(log_data)
             
-            # Initialize history for this channel if not exists
-            if channel_name not in self.normalization_history:
-                self.normalization_history[channel_name] = {
-                    'min_values': [current_min],
-                    'max_values': [current_max],
-                    'smooth_min': current_min,
-                    'smooth_max': current_max
-                }
-                self.target_min_max[channel_name] = {
-                    'target_min': current_min,
-                    'target_max': current_max,
-                    'frames_to_target': 0
-                }
+            # Add current frame data to history
+            frame_data = {
+                'frame': self.frame_counter,
+                'min_val': current_min_val,
+                'max_val': current_max_val
+            }
             
-            history = self.normalization_history[channel_name]
-            target_info = self.target_min_max[channel_name]
+            # Initialize history for this channel if needed
+            if channel_name not in self.brightness_history:
+                self.brightness_history[channel_name] = []
             
-            # Add current values to history
-            history['min_values'].append(current_min)
-            history['max_values'].append(current_max)
+            self.brightness_history[channel_name].append(frame_data)
             
-            # Keep only recent history (smoothing_frames)
-            if len(history['min_values']) > self.smoothing_frames:
-                history['min_values'] = history['min_values'][-self.smoothing_frames:]
-                history['max_values'] = history['max_values'][-self.smoothing_frames:]
+            # Keep only last smoothing_frames
+            if len(self.brightness_history[channel_name]) > self.smoothing_frames:
+                self.brightness_history[channel_name] = self.brightness_history[channel_name][-self.smoothing_frames:]
             
-            # Calculate current target values based on recent history
-            # Use percentiles to avoid extreme outliers
-            current_target_min = np.percentile(history['min_values'], 10)  # 10th percentile
-            current_target_max = np.percentile(history['max_values'], 90)  # 90th percentile
-            
-            # If target values changed significantly and we're not already transitioning, start new transition
-            if target_info['frames_to_target'] <= 0:  # Only start new transition when current one is finished
-                min_change_threshold = abs(target_info['target_min'] - current_target_min) / max(abs(target_info['target_min']), 1e-6)
-                max_change_threshold = abs(target_info['target_max'] - current_target_max) / max(abs(target_info['target_max']), 1e-6)
+            # Calculate target values based on percentiles from history
+            history = self.brightness_history[channel_name]
+            if len(history) >= 3:  # Need at least some history (reduced from 5 to 3)
+                min_vals = [h['min_val'] for h in history]
+                max_vals = [h['max_val'] for h in history]
                 
-                if min_change_threshold > 0.1 or max_change_threshold > 0.1:  # 10% change threshold
-                    target_info['target_min'] = current_target_min
-                    target_info['target_max'] = current_target_max
-                    target_info['frames_to_target'] = self.smoothing_frames
-            
-            # Smooth transition to target values
-            if target_info['frames_to_target'] > 0:
-                # Calculate interpolation factor
-                t = 1.0 - (target_info['frames_to_target'] / self.smoothing_frames)
-                t = 0.5 * (1 - np.cos(np.pi * t))  # Smooth S-curve
+                # Use more conservative percentiles for stability
+                target_min = np.percentile(min_vals, 10)  # 10th percentile for min (was 5th)
+                target_max = np.percentile(max_vals, 90)  # 90th percentile for max (was 95th)
                 
-                # Store previous values for debugging
-                prev_smooth_min = history['smooth_min']
-                prev_smooth_max = history['smooth_max']
-                
-                # Interpolate between current smooth values and targets
-                history['smooth_min'] = history['smooth_min'] + (target_info['target_min'] - history['smooth_min']) * t
-                history['smooth_max'] = history['smooth_max'] + (target_info['target_max'] - history['smooth_max']) * t
-                
-                # Debug output (only for brightness channel to avoid spam)
-                if channel_name == 'brightness' and target_info['frames_to_target'] % 10 == 0:
-                    print(f"Smoothing {channel_name}: t={t:.3f}, frames_left={target_info['frames_to_target']}")
-                    print(f"  smooth_min: {prev_smooth_min:.6f} -> {history['smooth_min']:.6f} (target: {target_info['target_min']:.6f})")
-                    print(f"  smooth_max: {prev_smooth_max:.6f} -> {history['smooth_max']:.6f} (target: {target_info['target_max']:.6f})")
-                
-                target_info['frames_to_target'] -= 1
+                # print(f"  >> Percentile calculation: min {np.min(min_vals):.3f}-{np.max(min_vals):.3f} "
+                    #   f"-> {target_min:.3f}, max {np.min(max_vals):.3f}-{np.max(max_vals):.3f} -> {target_max:.3f}")
             else:
-                # No transition, use current targets
-                history['smooth_min'] = target_info['target_min']
-                history['smooth_max'] = target_info['target_max']
+                target_min = current_min_val
+                target_max = current_max_val
+                # print(f"  >> Using current values (insufficient history: {len(history)})")
             
-            # Use smoothed min/max for normalization
-            smooth_min = history['smooth_min']
-            smooth_max = history['smooth_max']
+            # Initialize smoothing parameters if needed
+            if channel_name not in self.current_smooth_params:
+                self.current_smooth_params[channel_name] = {
+                    'min_val': current_min_val,
+                    'max_val': current_max_val
+                }
+                self.target_smooth_params[channel_name] = {
+                    'min_val': target_min,
+                    'max_val': target_max
+                }
+                self.baseline_smooth_params[channel_name] = {
+                    'min_val': target_min,
+                    'max_val': target_max,
+                    'frame': self.frame_counter
+                }
+                self.smooth_transition_frame = self.frame_counter
             
-            if smooth_max == smooth_min: # If all values are the same
+            # Update baseline periodically or if it doesn't exist
+            baseline_params = self.baseline_smooth_params.get(channel_name, {})
+            frames_since_baseline = self.frame_counter - baseline_params.get('frame', 0)
+            
+            if frames_since_baseline >= self.baseline_update_interval or not baseline_params:
+                self.baseline_smooth_params[channel_name] = {
+                    'min_val': target_min,
+                    'max_val': target_max,
+                    'frame': self.frame_counter
+                }
+                baseline_params = self.baseline_smooth_params[channel_name]
+                # print(f"  >> Updated baseline at frame {self.frame_counter}: {target_min:.3f}-{target_max:.3f}")
+            
+            # Compare with baseline instead of previous target
+            current_params = self.current_smooth_params[channel_name]
+            target_params = self.target_smooth_params[channel_name]
+            
+            # Calculate changes from baseline (accumulated over time)
+            baseline_min_change = abs(target_min - baseline_params['min_val']) / max(abs(baseline_params['min_val']), 1e-10)
+            baseline_max_change = abs(target_max - baseline_params['max_val']) / max(abs(baseline_params['max_val']), 1e-10)
+            
+            # Also calculate immediate changes (for debugging)
+            immediate_min_change = abs(target_min - target_params['min_val']) / max(abs(target_params['min_val']), 1e-10)
+            immediate_max_change = abs(target_max - target_params['max_val']) / max(abs(target_params['max_val']), 1e-10)
+            
+            # Debug output
+            # print(f"Frame {self.frame_counter:05d} [{channel_name}] "
+            #       f"Raw: {current_min_val:.3f}-{current_max_val:.3f} | "
+            #       f"Target: {target_min:.3f}-{target_max:.3f} | "
+            #       f"Current: {current_params['min_val']:.3f}-{current_params['max_val']:.3f} | "
+            #       f"Baseline: {baseline_params['min_val']:.3f}-{baseline_params['max_val']:.3f} | "
+            #       f"vs Baseline: {baseline_min_change:.3%}-{baseline_max_change:.3%} | "
+            #       f"vs Immediate: {immediate_min_change:.3%}-{immediate_max_change:.3%} | "
+            #       f"History: {len(history)}")
+            
+            # Start transition based on accumulated change from baseline (reduced threshold)
+            if baseline_min_change > 0.05 or baseline_max_change > 0.05:  # 5% accumulated change
+                # Start new transition
+                # print(f"  >> Starting new transition (baseline): {baseline_min_change:.3%} or {baseline_max_change:.3%} > 5%")
+                self.target_smooth_params[channel_name] = {
+                    'min_val': target_min,
+                    'max_val': target_max
+                }
+                self.smooth_transition_frame = self.frame_counter
+                # Update baseline after starting transition
+                self.baseline_smooth_params[channel_name] = {
+                    'min_val': target_min,
+                    'max_val': target_max,
+                    'frame': self.frame_counter
+                }
+            elif immediate_min_change > 0.001 or immediate_max_change > 0.001:  # Small immediate changes
+                # Even for small changes, continuously update target slightly
+                # print(f"  >> Continuous smoothing: {immediate_min_change:.3%} and {immediate_max_change:.3%} > 1%")
+                alpha = 0.1  # Moderate adaptation for small changes
+                self.target_smooth_params[channel_name] = {
+                    'min_val': target_params['min_val'] * (1 - alpha) + target_min * alpha,
+                    'max_val': target_params['max_val'] * (1 - alpha) + target_max * alpha
+                }
+            # else:
+                # print(f"  >> No significant change detected")
+            
+            # Calculate smooth interpolation - always apply some smoothing
+            frames_since_transition = self.frame_counter - self.smooth_transition_frame
+            
+            # Apply smoothing for a longer period to ensure smooth transitions
+            smoothing_period = self.smoothing_frames * 2  # Double the smoothing period
+            
+            if frames_since_transition < smoothing_period:
+                # Interpolate smoothly
+                t = frames_since_transition / smoothing_period
+                # Use smooth easing function
+                t_smooth = 3*t*t - 2*t*t*t  # Smoothstep function
+                
+                smooth_min = current_params['min_val'] * (1 - t_smooth) + target_params['min_val'] * t_smooth
+                smooth_max = current_params['max_val'] * (1 - t_smooth) + target_params['max_val'] * t_smooth
+                
+                # print(f"  >> Interpolating: t={t:.3f}, t_smooth={t_smooth:.3f}, "
+                    #   f"frames_since={frames_since_transition}/{smoothing_period}")
+            else:
+                # Apply continuous light smoothing even after transition
+                alpha = 0.002  # Very small constant smoothing factor
+                smooth_min = current_params['min_val'] * (1 - alpha) + target_params['min_val'] * alpha
+                smooth_max = current_params['max_val'] * (1 - alpha) + target_params['max_val'] * alpha
+                # print(f"  >> Continuous smoothing: alpha={alpha}")
+            
+            # Update current parameters
+            self.current_smooth_params[channel_name] = {
+                'min_val': smooth_min,
+                'max_val': smooth_max
+            }
+            
+            # print(f"  >> Final smooth: {smooth_min:.3f}-{smooth_max:.3f}")
+            
+            # Normalize using smooth parameters
+            if smooth_max == smooth_min:
                 normalized_channel_data = np.zeros_like(log_data, dtype=np.uint8)
             else:
                 normalized_channel_data = 255 * (log_data - smooth_min) / (smooth_max - smooth_min)
@@ -213,6 +298,66 @@ class Mapper:
 
     def get_output_channels(self):
         return self.output_channels
+
+    def setup_brightness_smoothing(self, smooth_file_path, current_frame, is_continuing_from_frame):
+        """Setup brightness smoothing system with file persistence."""
+        self.smooth_file_path = smooth_file_path
+        self.frame_counter = current_frame
+        
+        # Load smoothing data if continuing from a previous session
+        if is_continuing_from_frame and os.path.exists(smooth_file_path):
+            try:
+                with open(smooth_file_path, 'r') as f:
+                    smooth_data = json.load(f)
+                
+                # Check if the data is for the correct frame
+                if smooth_data.get('frame', -1) == current_frame - 1:
+                    self.current_smooth_params = smooth_data.get('current_smooth_params', {})
+                    self.target_smooth_params = smooth_data.get('target_smooth_params', {})
+                    self.baseline_smooth_params = smooth_data.get('baseline_smooth_params', {})
+                    self.smooth_transition_frame = smooth_data.get('smooth_transition_frame', current_frame)
+                    self.brightness_history = smooth_data.get('brightness_history', {})
+                    print(f"Loaded smoothing parameters from {smooth_file_path} for frame {current_frame - 1}")
+                else:
+                    print(f"Smoothing file frame mismatch. Expected {current_frame - 1}, got {smooth_data.get('frame', -1)}. Starting fresh.")
+                    self._reset_smoothing_state()
+            except (json.JSONDecodeError, KeyError, IOError) as e:
+                print(f"Failed to load smoothing file {smooth_file_path}: {e}. Starting fresh.")
+                self._reset_smoothing_state()
+        else:
+            self._reset_smoothing_state()
+
+    def _reset_smoothing_state(self):
+        """Reset all smoothing state to initial values."""
+        self.current_smooth_params = {}
+        self.target_smooth_params = {}
+        self.baseline_smooth_params = {}
+        self.brightness_history = {}
+        self.smooth_transition_frame = self.frame_counter
+
+    def save_brightness_smoothing(self):
+        """Save current brightness smoothing parameters to file."""
+        if not self.smooth_file_path:
+            return
+        
+        smooth_data = {
+            'frame': self.frame_counter,
+            'current_smooth_params': self.current_smooth_params,
+            'target_smooth_params': self.target_smooth_params,
+            'baseline_smooth_params': self.baseline_smooth_params,
+            'smooth_transition_frame': self.smooth_transition_frame,
+            'brightness_history': self.brightness_history
+        }
+        
+        try:
+            with open(self.smooth_file_path, 'w') as f:
+                json.dump(smooth_data, f, indent=2)
+        except IOError as e:
+            print(f"Failed to save smoothing file {self.smooth_file_path}: {e}")
+
+    def update_frame_counter(self, frame_number):
+        """Update the current frame number for smoothing calculations."""
+        self.frame_counter = frame_number
 
     def add_keyframe(self, filename, view_width_absolute):
         """Adds a keyframe only if parameters change and updates target_view"""
@@ -324,8 +469,8 @@ class Mapper:
 
         timer = time.time()-timer
         
-        if timer > 1.0:
-            print(f"Normalize timer {timer}")
+        # if timer > 1.0:
+            # print(f"Normalize timer {timer}")
 
         return rgb_data
 

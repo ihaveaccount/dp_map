@@ -8,6 +8,7 @@ import argparse
 import pathlib
 import re
 import time
+import json
 from dp_lib import CLMapper, Mapper # Import both mappers and base Mapper
 
 from PIL import Image
@@ -73,6 +74,7 @@ if wid %2 != 0: wid += 1
 WIDTH, HEIGHT = wid, args.height
 
 ZOOM_FACTOR = 0.1       # Zoom factor on mouse click
+SMOOTHING_FILE = "smooth.json"  # File for brightness smoothing parameters
 
 frame_counter = 0
 
@@ -211,6 +213,11 @@ def main():
 
     setup_frame_saving() 
 
+    # Setup brightness smoothing system
+    smooth_file_path = os.path.join(frames_dir, SMOOTHING_FILE)
+    is_continuing_from_frame = (args.start > 0) or (args.anim and frame_counter > 0)
+    mapper.setup_brightness_smoothing(smooth_file_path, frame_counter, is_continuing_from_frame) 
+
     
     # Parameters for keyboard control
     # Get a sorted list of parameter names for consistent indexing
@@ -233,7 +240,14 @@ def main():
                 view_width_absolute = x_max - x_min
                 
                 mapper.set_current_view(*new_target)
+                
+                # Update frame counter for brightness smoothing
+                mapper.update_frame_counter(frame_counter)
+                
                 rgb_data = mapper.calc_and_get_rgb_data()
+                
+                # Save brightness smoothing parameters after calculation
+                mapper.save_brightness_smoothing()
                 
                 if args.anim:
                     save_to_file(rgb_data)
@@ -439,7 +453,13 @@ def main():
 
             start_time = time.time()
             if not args.skipcalc:
+                # Update frame counter for brightness smoothing
+                mapper.update_frame_counter(frame_counter)
+                
                 rgb_data = mapper.calc_and_get_rgb_data()
+
+                # Save brightness smoothing parameters after calculation
+                mapper.save_brightness_smoothing()
 
                 if args.anim:
                     save_to_file(rgb_data)
