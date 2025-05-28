@@ -4,6 +4,7 @@ import pyopencl as cl
 import math
 import re
 import time
+import os
 from scipy.ndimage import median_filter
 import json
 
@@ -20,7 +21,7 @@ class Mapper:
         self.initial_params = {}
         # Normalization smoothing variables
         self.normalization_history = {}  # Store min/max history for each channel
-        self.smoothing_frames = 30  # Number of frames for smoothing
+        self.smoothing_frames = 120  # Number of frames for smoothing (matches --smooth default)
         self.target_min_max = {}  # Target min/max values for smooth transition
         
     @staticmethod
@@ -152,19 +153,20 @@ class Mapper:
                 history['min_values'] = history['min_values'][-self.smoothing_frames:]
                 history['max_values'] = history['max_values'][-self.smoothing_frames:]
             
-            # Calculate target values based on recent history
+            # Calculate current target values based on recent history
             # Use percentiles to avoid extreme outliers
-            target_min = np.percentile(history['min_values'], 10)  # 10th percentile
-            target_max = np.percentile(history['max_values'], 90)  # 90th percentile
+            current_target_min = np.percentile(history['min_values'], 10)  # 10th percentile
+            current_target_max = np.percentile(history['max_values'], 90)  # 90th percentile
             
-            # If target values changed significantly, start smooth transition
-            min_change_threshold = abs(target_info['target_min'] - target_min) / max(abs(target_info['target_min']), 1e-6)
-            max_change_threshold = abs(target_info['target_max'] - target_max) / max(abs(target_info['target_max']), 1e-6)
-            
-            if min_change_threshold > 0.1 or max_change_threshold > 0.1:  # 10% change threshold
-                target_info['target_min'] = target_min
-                target_info['target_max'] = target_max
-                target_info['frames_to_target'] = self.smoothing_frames
+            # If target values changed significantly and we're not already transitioning, start new transition
+            if target_info['frames_to_target'] <= 0:  # Only start new transition when current one is finished
+                min_change_threshold = abs(target_info['target_min'] - current_target_min) / max(abs(target_info['target_min']), 1e-6)
+                max_change_threshold = abs(target_info['target_max'] - current_target_max) / max(abs(target_info['target_max']), 1e-6)
+                
+                if min_change_threshold > 0.1 or max_change_threshold > 0.1:  # 10% change threshold
+                    target_info['target_min'] = current_target_min
+                    target_info['target_max'] = current_target_max
+                    target_info['frames_to_target'] = self.smoothing_frames
             
             # Smooth transition to target values
             if target_info['frames_to_target'] > 0:
@@ -172,9 +174,19 @@ class Mapper:
                 t = 1.0 - (target_info['frames_to_target'] / self.smoothing_frames)
                 t = 0.5 * (1 - np.cos(np.pi * t))  # Smooth S-curve
                 
+                # Store previous values for debugging
+                prev_smooth_min = history['smooth_min']
+                prev_smooth_max = history['smooth_max']
+                
                 # Interpolate between current smooth values and targets
                 history['smooth_min'] = history['smooth_min'] + (target_info['target_min'] - history['smooth_min']) * t
                 history['smooth_max'] = history['smooth_max'] + (target_info['target_max'] - history['smooth_max']) * t
+                
+                # Debug output (only for brightness channel to avoid spam)
+                if channel_name == 'brightness' and target_info['frames_to_target'] % 10 == 0:
+                    print(f"Smoothing {channel_name}: t={t:.3f}, frames_left={target_info['frames_to_target']}")
+                    print(f"  smooth_min: {prev_smooth_min:.6f} -> {history['smooth_min']:.6f} (target: {target_info['target_min']:.6f})")
+                    print(f"  smooth_max: {prev_smooth_max:.6f} -> {history['smooth_max']:.6f} (target: {target_info['target_max']:.6f})")
                 
                 target_info['frames_to_target'] -= 1
             else:
@@ -349,11 +361,87 @@ class Mapper:
     def set_normalization_smoothing(self, frames=30):
         """Sets the number of frames for normalization smoothing (default: 30)"""
         self.smoothing_frames = max(1, frames)
+        print(f"Normalization smoothing set to {self.smoothing_frames} frames")
     
     def reset_normalization_history(self):
         """Resets normalization history - useful when starting a new animation"""
         self.normalization_history = {}
         self.target_min_max = {}
+    
+    def save_normalization_state(self, filepath, frame_number):
+        """Saves current normalization smoothing state to a JSON file"""
+        state = {
+            'frame_number': frame_number,
+            'smoothing_frames': self.smoothing_frames,
+            'normalization_history': {},
+            'target_min_max': {}
+        }
+        
+        # Convert numpy arrays to lists for JSON serialization
+        for channel_name, history in self.normalization_history.items():
+            state['normalization_history'][channel_name] = {
+                'min_values': [float(x) for x in history['min_values']],
+                'max_values': [float(x) for x in history['max_values']], 
+                'smooth_min': float(history['smooth_min']),
+                'smooth_max': float(history['smooth_max'])
+            }
+        
+        for channel_name, target_info in self.target_min_max.items():
+            state['target_min_max'][channel_name] = {
+                'target_min': float(target_info['target_min']),
+                'target_max': float(target_info['target_max']),
+                'frames_to_target': int(target_info['frames_to_target'])
+            }
+        
+        try:
+            with open(filepath, 'w') as f:
+                json.dump(state, f, indent=2)
+        except Exception as e:
+            print(f"Warning: Could not save normalization state: {e}")
+    
+    def load_normalization_state(self, filepath, current_frame):
+        """Loads normalization smoothing state from a JSON file if it matches the current frame"""
+        if not os.path.exists(filepath):
+            return False
+        
+        try:
+            with open(filepath, 'r') as f:
+                state = json.load(f)
+            
+            # Only load if we're continuing from the exact frame where it was saved
+            if state.get('frame_number') != current_frame:
+                print(f"Normalization state frame mismatch: saved={state.get('frame_number')}, current={current_frame}. Starting fresh.")
+                return False
+            
+            print(f"Loading normalization state from frame {current_frame}")
+            
+            # Don't override smoothing_frames - use current setting instead of saved value
+            # self.smoothing_frames = state.get('smoothing_frames', 30)
+            self.normalization_history = {}
+            self.target_min_max = {}
+            
+            # Restore normalization history
+            for channel_name, history_data in state.get('normalization_history', {}).items():
+                self.normalization_history[channel_name] = {
+                    'min_values': history_data['min_values'],
+                    'max_values': history_data['max_values'],
+                    'smooth_min': history_data['smooth_min'],
+                    'smooth_max': history_data['smooth_max']
+                }
+            
+            # Restore target info
+            for channel_name, target_data in state.get('target_min_max', {}).items():
+                self.target_min_max[channel_name] = {
+                    'target_min': target_data['target_min'],
+                    'target_max': target_data['target_max'],
+                    'frames_to_target': target_data['frames_to_target']
+                }
+            
+            return True
+            
+        except Exception as e:
+            print(f"Warning: Could not load normalization state: {e}")
+            return False
 
 
 class CLMapper(Mapper):

@@ -51,8 +51,8 @@ parser.add_argument('--param_to', nargs=2, action='append', metavar=('NAME', 'VA
 parser.add_argument('--paranim', action='store_true', 
                     help='Animate parameter interpolation from current to --param values')
 
-parser.add_argument('--smooth', type=int, default=30,
-                    help='Number of frames for normalization smoothing (default: 30)')
+parser.add_argument('--smooth', type=int, default=120,
+                    help='Number of frames for normalization smoothing (default: 120)')
 
 
 args = parser.parse_args()
@@ -91,10 +91,11 @@ def find_max_frame_number(directory):
 
 # --- Global variables for animation and saving ---
 frames_dir = ""
+smooth_file = ""
 animation_queue = [] # [(type, data, current_step, total_steps, prev_data_norm)]
 
 def setup_frame_saving():
-    global frame_counter, frames_dir
+    global frame_counter, frames_dir, smooth_file
     
     base_dir = "frames"
     
@@ -106,6 +107,9 @@ def setup_frame_saving():
 
     if not args.pfile:
         args.pfile = os.path.join(frames_dir, "point.json")
+    
+    # Set up smooth file path
+    smooth_file = os.path.join(frames_dir, "smooth.json")
 
     if args.start > 0:
         frame_counter = args.start
@@ -278,8 +282,14 @@ def main():
         print("Start params: ", start_params)
         print("Target params: ", target_params)
 
-        # Reset normalization history for smooth animation start
-        mapper.reset_normalization_history()
+        # Handle normalization state - load if continuing, reset if starting fresh
+        if frame_counter > 0:
+            # Try to load normalization state when continuing from a specific frame
+            if not mapper.load_normalization_state(smooth_file, frame_counter):
+                mapper.reset_normalization_history()
+        else:
+            # Starting fresh - reset normalization history
+            mapper.reset_normalization_history()
 
         animation_queue.append({
             'type': 'param_interpolation',
@@ -299,8 +309,14 @@ def main():
             
             target_params = mapper.params.copy() # Params after loading
             
-            # Reset normalization history for smooth animation start
-            mapper.reset_normalization_history()
+            # Handle normalization state - load if continuing, reset if starting fresh
+            if frame_counter > 0:
+                # Try to load normalization state when continuing from a specific frame
+                if not mapper.load_normalization_state(smooth_file, frame_counter):
+                    mapper.reset_normalization_history()
+            else:
+                # Starting fresh - reset normalization history
+                mapper.reset_normalization_history()
             
             animation_queue.append({
                 'type': 'keyframe',
@@ -428,10 +444,17 @@ def main():
                 if args.anim:
                     save_to_file(rgb_data)
                     frame_counter += 1
+                    
+                    # Save normalization state after each frame
+                    mapper.save_normalization_state(smooth_file, frame_counter)
                 else:
                     current_surface = create_surface_from_normalized_data(rgb_data)
             else:
                 frame_counter += 1
+                
+                # Save normalization state even when skipping calculation
+                if args.anim:
+                    mapper.save_normalization_state(smooth_file, frame_counter)
 
             # End animation - check after frame calculation and saving
             if anim['step'] >= anim['total_steps'] or (args.end is not None and frame_counter > args.end):
