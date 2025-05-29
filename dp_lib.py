@@ -310,21 +310,33 @@ class Mapper:
                 with open(smooth_file_path, 'r') as f:
                     smooth_data = json.load(f)
                 
-                # Check if the data is for the correct frame
-                if smooth_data.get('frame', -1) == current_frame - 1:
+                expected_frame = current_frame - 1
+                actual_frame = smooth_data.get('frame', -1)
+                
+                print(f"Found smoothing file: expected frame {expected_frame}, actual frame {actual_frame}")
+                
+                # Check if the data is for the correct frame (or close enough)
+                # Allow for small discrepancies in case of interrupted saves
+                if abs(actual_frame - expected_frame) <= 1:
                     self.current_smooth_params = smooth_data.get('current_smooth_params', {})
                     self.target_smooth_params = smooth_data.get('target_smooth_params', {})
                     self.baseline_smooth_params = smooth_data.get('baseline_smooth_params', {})
                     self.smooth_transition_frame = smooth_data.get('smooth_transition_frame', current_frame)
                     self.brightness_history = smooth_data.get('brightness_history', {})
-                    print(f"Loaded smoothing parameters from {smooth_file_path} for frame {current_frame - 1}")
+                    print(f"✓ Loaded smoothing parameters from {smooth_file_path} for frame {actual_frame}")
+                    print(f"  Current params channels: {list(self.current_smooth_params.keys())}")
+                    print(f"  Brightness history entries: {len(self.brightness_history)}")
                 else:
-                    print(f"Smoothing file frame mismatch. Expected {current_frame - 1}, got {smooth_data.get('frame', -1)}. Starting fresh.")
+                    print(f"✗ Smoothing file frame mismatch. Expected ~{expected_frame}, got {actual_frame}. Starting fresh.")
                     self._reset_smoothing_state()
             except (json.JSONDecodeError, KeyError, IOError) as e:
-                print(f"Failed to load smoothing file {smooth_file_path}: {e}. Starting fresh.")
+                print(f"✗ Failed to load smoothing file {smooth_file_path}: {e}. Starting fresh.")
                 self._reset_smoothing_state()
         else:
+            if is_continuing_from_frame:
+                print(f"✗ Continuing but smoothing file {smooth_file_path} not found. Starting fresh.")
+            else:
+                print(f"✓ Starting fresh smoothing (new session)")
             self._reset_smoothing_state()
 
     def _reset_smoothing_state(self):
@@ -338,6 +350,7 @@ class Mapper:
     def save_brightness_smoothing(self):
         """Save current brightness smoothing parameters to file."""
         if not self.smooth_file_path:
+            print("⚠ Warning: No smooth_file_path set, cannot save brightness smoothing")
             return
         
         smooth_data = {
@@ -352,8 +365,9 @@ class Mapper:
         try:
             with open(self.smooth_file_path, 'w') as f:
                 json.dump(smooth_data, f, indent=2)
+            # print(f"✓ Saved brightness smoothing for frame {self.frame_counter} to {self.smooth_file_path}")
         except IOError as e:
-            print(f"Failed to save smoothing file {self.smooth_file_path}: {e}")
+            print(f"✗ Failed to save smoothing file {self.smooth_file_path}: {e}")
 
     def update_frame_counter(self, frame_number):
         """Update the current frame number for smoothing calculations."""

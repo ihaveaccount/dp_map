@@ -216,6 +216,12 @@ def main():
     # Setup brightness smoothing system
     smooth_file_path = os.path.join(frames_dir, SMOOTHING_FILE)
     is_continuing_from_frame = (args.start > 0) or (args.anim and frame_counter > 0)
+    
+    # For debugging: print the frame counter and continuing status
+    print(f"Setting up brightness smoothing: frame_counter={frame_counter}, is_continuing={is_continuing_from_frame}")
+    if is_continuing_from_frame:
+        print(f"Looking for smoothing data for frame {frame_counter - 1} in {smooth_file_path}")
+    
     mapper.setup_brightness_smoothing(smooth_file_path, frame_counter, is_continuing_from_frame) 
 
     
@@ -296,15 +302,8 @@ def main():
         print("Start params: ", start_params)
         print("Target params: ", target_params)
 
-        # Handle normalization state - load if continuing, reset if starting fresh
-        if frame_counter > 0:
-            # Try to load normalization state when continuing from a specific frame
-            if not mapper.load_normalization_state(smooth_file, frame_counter):
-                mapper.reset_normalization_history()
-        else:
-            # Starting fresh - reset normalization history
-            mapper.reset_normalization_history()
-
+        # Normalization state is handled by setup_brightness_smoothing() above
+        
         animation_queue.append({
             'type': 'param_interpolation',
             'start_params': start_params.copy(),
@@ -323,14 +322,7 @@ def main():
             
             target_params = mapper.params.copy() # Params after loading
             
-            # Handle normalization state - load if continuing, reset if starting fresh
-            if frame_counter > 0:
-                # Try to load normalization state when continuing from a specific frame
-                if not mapper.load_normalization_state(smooth_file, frame_counter):
-                    mapper.reset_normalization_history()
-            else:
-                # Starting fresh - reset normalization history
-                mapper.reset_normalization_history()
+            # Normalization state is handled by setup_brightness_smoothing() above
             
             animation_queue.append({
                 'type': 'keyframe',
@@ -464,17 +456,10 @@ def main():
                 if args.anim:
                     save_to_file(rgb_data)
                     frame_counter += 1
-                    
-                    # Save normalization state after each frame
-                    mapper.save_normalization_state(smooth_file, frame_counter)
                 else:
                     current_surface = create_surface_from_normalized_data(rgb_data)
             else:
                 frame_counter += 1
-                
-                # Save normalization state even when skipping calculation
-                if args.anim:
-                    mapper.save_normalization_state(smooth_file, frame_counter)
 
             # End animation - check after frame calculation and saving
             if anim['step'] >= anim['total_steps'] or (args.end is not None and frame_counter > args.end):
