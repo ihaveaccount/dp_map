@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "*.cl": "opencl"
+    },
+    "C_Cpp.errorSquiggles": "Disabled",
+    "C_Cpp.intelliSenseEngine": "Disabled",
+    "[opencl]": {
+        "C_Cpp.errorSquiggles": "Disabled"
+    }
+}
