@@ -194,6 +194,9 @@ def main():
     mapper.set_median_filter_size(args.median)
     mapper.set_invert(args.invert)
     mapper.set_normalization_smoothing(args.smooth)
+    
+    # Disable smoothing in interactive mode, enable in animation mode
+    mapper.set_smoothing_enabled(args.anim)
 
 
     # Override with command line arguments if provided

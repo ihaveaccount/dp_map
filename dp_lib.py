@@ -35,6 +35,9 @@ class Mapper:
         self.frame_counter = 0  # Current frame number
         self.baseline_update_interval = 15  # Update baseline every N frames for comparison
         
+        # Flag to disable smoothing in interactive mode
+        self.enable_smoothing = True  # Will be set to False in interactive mode
+        
     @staticmethod
     
 
@@ -130,7 +133,7 @@ class Mapper:
         raise NotImplementedError
 
     def normalize_data(self): # Modified to take no arguments, uses self.raw_data
-        """ Normalizes raw data with smooth brightness transitions across frames. """
+        """ Normalizes raw data with smooth brightness transitions across frames (only in animation mode). """
         for channel_name, raw_channel_data in self.raw_data.items():
             # Apply natural logarithm (log1p for zeros: log(1+x))
             log_data = np.log1p(raw_channel_data.astype(np.float64))
@@ -138,6 +141,18 @@ class Mapper:
             current_min_val = np.min(log_data)
             current_max_val = np.max(log_data)
             
+            # If smoothing is disabled (interactive mode), use direct normalization
+            if not self.enable_smoothing:
+                # Direct normalization without smoothing
+                if current_max_val == current_min_val:
+                    normalized_channel_data = np.zeros_like(log_data, dtype=np.uint8)
+                else:
+                    normalized_channel_data = 255 * (log_data - current_min_val) / (current_max_val - current_min_val)
+                
+                self.normalized_data[channel_name] = np.clip(normalized_channel_data, 0, 255).astype(np.uint8)
+                continue
+            
+            # Smoothing logic (only for animation mode)
             # Add current frame data to history
             frame_data = {
                 'frame': self.frame_counter,
@@ -372,6 +387,18 @@ class Mapper:
     def update_frame_counter(self, frame_number):
         """Update the current frame number for smoothing calculations."""
         self.frame_counter = frame_number
+
+    def set_smoothing_enabled(self, enabled):
+        """Enable or disable brightness smoothing. Disabled in interactive mode."""
+        self.enable_smoothing = enabled
+        if not enabled:
+            print("✓ Brightness smoothing disabled (interactive mode)")
+        else:
+            print("✓ Brightness smoothing enabled (animation mode)")
+
+    def is_smoothing_enabled(self):
+        """Check if brightness smoothing is enabled."""
+        return self.enable_smoothing
 
     def add_keyframe(self, filename, view_width_absolute):
         """Adds a keyframe only if parameters change and updates target_view"""
