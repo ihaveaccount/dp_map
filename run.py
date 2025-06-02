@@ -9,7 +9,7 @@ import pathlib
 import re
 import time
 import json
-from dp_lib import CLMapper, Mapper # Import both mappers and base Mapper
+from mappers import CLMapper, Mapper # Import both mappers and base Mapper
 
 from PIL import Image
 

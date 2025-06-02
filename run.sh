@@ -7,8 +7,8 @@ user_interrupted=false
 trap 'user_interrupted=true; echo "Ручное прерывание - остановка"; exit 130' SIGINT
 
 while true; do
-    echo "Запускаем: python3 dp_map.py $@"
-    python3 dp_map.py "$@"
+    echo "Запускаем: python3 run.py $@"
+    python3 run.py "$@"
     
     exit_code=$?
     
