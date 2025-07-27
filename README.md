@@ -1,4 +1,4 @@
-# DP map
+# OpenCL Fractal Explorer
 
 Before launching:
 
